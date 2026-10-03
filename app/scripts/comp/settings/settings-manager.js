@@ -167,14 +167,13 @@ const SettingsManager = {
         Events.emit('set-locale', loc);
 
         if (Launcher) {
-            const { ipcRenderer } = Launcher.electron();
             const localeValuesForDesktopApp = {};
             for (const [key, value] of Object.entries(Locale)) {
-                if (key.startsWith('sysMenu')) {
+                if (key.startsWith('sys')) {
                     localeValuesForDesktopApp[key] = value;
                 }
             }
-            ipcRenderer.invoke('setLocale', {
+            Launcher.ipcInvoke('setLocale', {
                 locale: loc,
                 ...localeValuesForDesktopApp
             });

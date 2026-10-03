@@ -161,8 +161,12 @@ class StorageBase {
                 });
             },
             (err) => {
-                this.logger.error('HTTP error', method, config.url, err);
-                return config.error && config.error(err, {});
+                if (err.notAllowed) {
+                    // the main process makes requests only to known cloud storages
+                    return this._httpRequestWeb(config, onLoad);
+                }
+                this.logger.error('HTTP error', method, config.url, err.message);
+                return config.error && config.error(err.message, {});
             }
         );
     }

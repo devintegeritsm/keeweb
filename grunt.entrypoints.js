@@ -82,6 +82,7 @@ module.exports = function(grunt) {
 
     grunt.registerTask('test', 'Build and run tests', [
         'build-test',
-        'run-test'
+        'run-test',
+        'run-desktop-test'
     ]);
 };

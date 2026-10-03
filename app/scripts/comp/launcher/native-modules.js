@@ -16,12 +16,11 @@ if (Launcher) {
     let promises = {};
     let ykChalRespCallbacks = {};
 
-    const { ipcRenderer } = Launcher.electron();
-    ipcRenderer.on('nativeModuleCallback', (e, msg) => NativeModules.hostCallback(msg));
-    ipcRenderer.on('nativeModuleHostError', (e, err) => NativeModules.hostError(err));
-    ipcRenderer.on('nativeModuleHostExit', (e, { code, sig }) => NativeModules.hostExit(code, sig));
-    ipcRenderer.on('nativeModuleHostDisconnect', () => NativeModules.hostDisconnect());
-    ipcRenderer.on('log', (e, ...args) => NativeModules.log(...args));
+    Launcher.ipcOn('nativeModuleCallback', (msg) => NativeModules.hostCallback(msg));
+    Launcher.ipcOn('nativeModuleHostError', (err) => NativeModules.hostError(err));
+    Launcher.ipcOn('nativeModuleHostExit', ({ code, sig }) => NativeModules.hostExit(code, sig));
+    Launcher.ipcOn('nativeModuleHostDisconnect', () => NativeModules.hostDisconnect());
+    Launcher.ipcOn('log', (...args) => NativeModules.log(...args));
 
     const handlers = {
         yubikeys(numYubiKeys) {
@@ -152,7 +151,7 @@ if (Launcher) {
                 // logger.debug('Call', cmd, args, callId);
                 promises[callId] = { cmd, resolve, reject };
 
-                ipcRenderer.send('nativeModuleCall', { cmd, args, callId });
+                Launcher.ipcSend('nativeModuleCall', { cmd, args, callId });
             });
         },
 
@@ -193,16 +192,16 @@ if (Launcher) {
         },
 
         hardwareCryptoDeleteKey: async () => {
-            await ipcRenderer.invoke('hardwareCryptoDeleteKey');
+            await Launcher.ipcInvoke('hardwareCryptoDeleteKey');
         },
 
         hardwareEncrypt: async (value) => {
-            const { data, salt } = await ipcRenderer.invoke('hardwareEncrypt', value.dataAndSalt());
+            const { data, salt } = await Launcher.ipcInvoke('hardwareEncrypt', value.dataAndSalt());
             return new kdbxweb.ProtectedValue(data, salt);
         },
 
         hardwareDecrypt: async (value, touchIdPrompt) => {
-            const { data, salt } = await ipcRenderer.invoke(
+            const { data, salt } = await Launcher.ipcInvoke(
                 'hardwareDecrypt',
                 value.dataAndSalt(),
                 touchIdPrompt

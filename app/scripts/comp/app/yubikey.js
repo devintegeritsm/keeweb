@@ -15,29 +15,13 @@ const YubiKey = {
     process: null,
     aborted: false,
 
-    cmd() {
-        if (this._cmd) {
-            return this._cmd;
-        }
-        const macYkmanPath = '/usr/local/bin/ykman';
-        if (Launcher.platform() === 'darwin' && Launcher.fileExistsSync(macYkmanPath)) {
-            this._cmd = macYkmanPath;
-        } else {
-            this._cmd = 'ykman';
-        }
-        return this._cmd;
-    },
-
     checkToolStatus() {
         if (this.ykmanStatus === 'ok') {
             return Promise.resolve(this.ykmanStatus);
         }
         return new Promise((resolve) => {
             this.ykmanStatus = 'checking';
-            this._cmd = undefined;
-            Launcher.spawn({
-                cmd: this.cmd(),
-                args: ['-v'],
+            Launcher.runYkman(['-v'], {
                 noStdOutLogging: true,
                 complete: (err, stdout, code) => {
                     if (err || code !== 0) {
@@ -110,9 +94,7 @@ const YubiKey = {
             return callback(null, []);
         }
 
-        this.process = Launcher.spawn({
-            cmd: this.cmd(),
-            args: ['list'],
+        this.process = Launcher.runYkman(['list'], {
             noStdOutLogging: true,
             complete: (err, stdout) => {
                 this.process = null;
@@ -178,9 +160,7 @@ const YubiKey = {
         };
         Events.on('usb-devices-changed', onDevicesChangedDuringRepair);
 
-        Launcher.spawn({
-            cmd: this.cmd(),
-            args: ['config', 'usb', '-e', 'oath', '-f'],
+        Launcher.runYkman(['config', 'usb', '-e', 'oath', '-f'], {
             noStdOutLogging: true,
             complete: (err) => {
                 logger.info('Repair complete', err ? 'with error' : 'OK');
@@ -201,9 +181,7 @@ const YubiKey = {
         }
         this.aborted = false;
 
-        this.process = Launcher.spawn({
-            cmd: this.cmd(),
-            args: ['-d', serial, 'oath', 'accounts', 'code'],
+        this.process = Launcher.runYkman(['-d', serial, 'oath', 'accounts', 'code'], {
             noStdOutLogging: true,
             throwOnStdErr: true,
             complete: (err, stdout) => {
@@ -243,9 +221,7 @@ const YubiKey = {
     },
 
     getOtp(serial, entry, callback) {
-        return Launcher.spawn({
-            cmd: this.cmd(),
-            args: ['-d', serial, 'oath', 'accounts', 'code', '--single', entry],
+        return Launcher.runYkman(['-d', serial, 'oath', 'accounts', 'code', '--single', entry], {
             noStdOutLogging: true,
             complete: (err, stdout) => {
                 if (err) {
@@ -261,15 +237,15 @@ const YubiKey = {
         const { vid, pid, serial, slot } = chalResp;
         const yubiKey = { vid, pid, serial };
 
-        challenge = Buffer.from(challenge);
+        challenge = new Uint8Array(challenge);
 
         // https://github.com/Yubico/yubikey-personalization-gui/issues/86
         // https://github.com/keepassxreboot/keepassxc/blob/develop/src/keys/drivers/YubiKey.cpp#L318
 
         const padLen = YubiKeyChallengeSize - challenge.byteLength;
 
-        const paddedChallenge = Buffer.alloc(YubiKeyChallengeSize, padLen);
-        challenge.copy(paddedChallenge);
+        const paddedChallenge = new Uint8Array(YubiKeyChallengeSize).fill(padLen);
+        paddedChallenge.set(challenge);
 
         NativeModules.yubiKeyChallengeResponse(
             yubiKey,
@@ -277,7 +253,7 @@ const YubiKey = {
             slot,
             (err, result) => {
                 if (result) {
-                    result = Buffer.from(result);
+                    result = new Uint8Array(result);
                 }
                 if (err) {
                     err.ykError = true;

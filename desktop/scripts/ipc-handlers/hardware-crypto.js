@@ -1,11 +1,11 @@
-const { ipcMain } = require('electron');
+const { handle } = require('../ipc-validation');
 const { readXoredValue, makeXoredValue } = require('../util/byte-utils');
 const { reqNative } = require('../util/req-native');
 const { isDev } = require('../util/app-info');
 
-ipcMain.handle('hardwareCryptoDeleteKey', hardwareCryptoDeleteKey);
-ipcMain.handle('hardwareEncrypt', hardwareEncrypt);
-ipcMain.handle('hardwareDecrypt', hardwareDecrypt);
+handle('hardwareCryptoDeleteKey', hardwareCryptoDeleteKey);
+handle('hardwareEncrypt', hardwareEncrypt);
+handle('hardwareDecrypt', hardwareDecrypt);
 
 const keyTag = 'net.antelle.keeweb.encryption-key';
 

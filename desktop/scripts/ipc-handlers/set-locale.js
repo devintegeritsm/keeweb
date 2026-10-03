@@ -1,4 +1,4 @@
-const { ipcMain } = require('electron');
+const { handle } = require('../ipc-validation');
 const { setLocale } = require('../locale');
 
-ipcMain.handle('setLocale', (e, values) => setLocale(values));
+handle('setLocale', (e, values) => setLocale(values));

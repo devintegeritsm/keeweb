@@ -1,3 +1,4 @@
+import * as kdbxweb from 'kdbxweb';
 import { Launcher } from 'comp/launcher';
 import { StorageBase } from 'storage/storage-base';
 
@@ -32,7 +33,7 @@ class StorageFile extends StorageBase {
                 const rev = stat.mtime.getTime().toString();
                 this.logger.debug('Loaded', path, rev, this.logger.ts(ts));
                 if (callback) {
-                    callback(null, data.buffer, { rev });
+                    callback(null, kdbxweb.ByteUtils.arrayToBuffer(data), { rev });
                 }
             });
         });
@@ -127,58 +128,19 @@ class StorageFile extends StorageBase {
     }
 
     watch(path, callback) {
-        const names = Launcher.parsePath(path);
-        if (!fileWatchers[names.dir] && !names.dir.startsWith('\\')) {
-            this.logger.debug('Watch dir', names.dir);
-            let fsWatcher;
-            try {
-                fsWatcher = Launcher.createFsWatcher(names.dir);
-            } catch (e) {
-                this.logger.warn('Error watching dir', e);
-            }
-            if (fsWatcher) {
-                fsWatcher.on('change', this.fsWatcherChange.bind(this, names.dir));
-                fileWatchers[names.dir] = {
-                    fsWatcher,
-                    callbacks: []
-                };
-            }
-        }
-
-        const fsWatcher = fileWatchers[names.dir];
-        if (fsWatcher) {
-            fsWatcher.callbacks.push({
-                file: names.file,
-                callback
-            });
-        }
+        this.unwatch(path);
+        this.logger.debug('Watch file', path);
+        fileWatchers[path] = Launcher.watchFile(path, () => {
+            this.logger.debug('File changed', path);
+            callback();
+        });
     }
 
     unwatch(path) {
-        const names = Launcher.parsePath(path);
-        const watcher = fileWatchers[names.dir];
-        if (watcher) {
-            const ix = watcher.callbacks.findIndex((cb) => cb.file === names.file);
-            if (ix >= 0) {
-                watcher.callbacks.splice(ix, 1);
-            }
-            if (!watcher.callbacks.length) {
-                this.logger.debug('Stop watch dir', names.dir);
-                watcher.fsWatcher.close();
-                delete fileWatchers[names.dir];
-            }
-        }
-    }
-
-    fsWatcherChange(dirname, evt, fileName) {
-        const watcher = fileWatchers[dirname];
-        if (watcher) {
-            watcher.callbacks.forEach((cb) => {
-                if (cb.file === fileName && typeof cb.callback === 'function') {
-                    this.logger.debug('File changed', dirname, evt, fileName);
-                    cb.callback();
-                }
-            });
+        if (fileWatchers[path]) {
+            this.logger.debug('Stop watching file', path);
+            fileWatchers[path]();
+            delete fileWatchers[path];
         }
     }
 }

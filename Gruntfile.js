@@ -140,7 +140,7 @@ module.exports = function (grunt) {
             },
             'desktop-app-content': {
                 cwd: 'desktop/',
-                src: ['**', '!package-lock.json'],
+                src: ['**', '!package-lock.json', '!test/**'],
                 dest: 'tmp/desktop/app/',
                 expand: true,
                 nonull: true
@@ -331,20 +331,19 @@ module.exports = function (grunt) {
             'desktop-public-key': {
                 options: {
                     replacements: [
-                        {
-                            pattern: "'@@PUBLIC_KEY_CONTENT'",
-                            replacement:
-                                '`' +
-                                fs
-                                    .readFileSync('app/resources/public-key.pem', {
-                                        encoding: 'utf8'
-                                    })
-                                    .trim() +
-                                '`'
-                        }
-                    ]
+                        ['@@PUBLIC_KEY_CONTENT', 'public-key.pem'],
+                        ['@@PUBLIC_KEY_NEW_CONTENT', 'public-key-new.pem']
+                    ].map(([placeholder, fileName]) => ({
+                        pattern: `'${placeholder}'`,
+                        replacement: JSON.stringify(
+                            fs.readFileSync(`app/resources/${fileName}`, 'utf8').trim()
+                        )
+                    }))
                 },
-                files: { 'tmp/desktop/app/main.js': 'desktop/main.js' }
+                files: {
+                    'tmp/desktop/app/scripts/update-signature.js':
+                        'desktop/scripts/update-signature.js'
+                }
             }
         },
         webpack: {

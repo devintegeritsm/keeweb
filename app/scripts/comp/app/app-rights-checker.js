@@ -26,10 +26,7 @@ const AppRightsChecker = {
     },
 
     needRunInstaller(callback) {
-        Launcher.statFile(this.AppPath, (stat) => {
-            const folderIsRoot = stat && stat.uid === 0;
-            callback(!folderIsRoot);
-        });
+        Launcher.appRightsNeedRunInstaller().then(callback, () => callback(false));
     },
 
     showAlert() {
@@ -56,17 +53,14 @@ const AppRightsChecker = {
     },
 
     runInstaller() {
-        Launcher.spawn({
-            cmd: this.AppPath + '/Contents/Installer/KeeWeb Installer.app/Contents/MacOS/applet',
-            args: ['--install'],
-            complete: () => {
-                this.needRunInstaller((needRun) => {
-                    if (this.alert && !needRun) {
-                        this.alert.closeWithResult('cancel');
-                    }
-                });
-            }
-        });
+        const complete = () => {
+            this.needRunInstaller((needRun) => {
+                if (this.alert && !needRun) {
+                    this.alert.closeWithResult('cancel');
+                }
+            });
+        };
+        Launcher.appRightsRunInstaller().then(complete, complete);
     },
 
     dontAskAnymore() {

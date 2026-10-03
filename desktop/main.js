@@ -180,7 +180,7 @@ main.on('web-contents-created', (event, contents) => {
         return { action: 'deny' };
     });
     contents.on('will-navigate', (e, url) => {
-        // the window has node integration, never let it navigate to a remote origin
+        // the window has a privileged preload, never let it navigate to a remote origin
         if (!url.startsWith(htmlPath)) {
             e.preventDefault();
             logger.warn(`Prevented navigation: ${url}`);
@@ -304,11 +304,12 @@ function createMainWindow() {
         frame: !frameless,
         backgroundColor: bgColor,
         webPreferences: {
-            contextIsolation: false,
-            sandbox: false,
+            preload: path.join(__dirname, 'preload.js'),
+            contextIsolation: true,
+            sandbox: true,
+            nodeIntegration: false,
+            nodeIntegrationInWorker: false,
             backgroundThrottling: false,
-            nodeIntegration: true,
-            nodeIntegrationInWorker: true,
             spellcheck: false,
             v8CacheOptions: 'none'
         }
@@ -588,18 +589,18 @@ function onContextMenu(e, props) {
 
 function notifyOpenFile() {
     if (ready && openFile && mainWindow) {
-        const openKeyfile = process.argv
+        const { grantFile } = require('./scripts/file-access');
+        const filePath = path.resolve(openFile);
+        let keyFilePath = process.argv
             .filter((arg) => arg.startsWith('--keyfile='))
             .map((arg) => arg.replace('--keyfile=', ''))[0];
-        const fileInfo = JSON.stringify({ data: openFile, key: openKeyfile });
-        mainWindow.webContents.executeJavaScript(
-            'if (window.launcherOpen) { window.launcherOpen(' +
-                fileInfo +
-                '); } ' +
-                ' else { window.launcherOpenedFile=' +
-                fileInfo +
-                '; }'
-        );
+        // files opened with the app are chosen by the user
+        grantFile(filePath);
+        if (keyFilePath) {
+            keyFilePath = path.resolve(keyFilePath);
+            grantFile(keyFilePath);
+        }
+        emitRemoteEvent('launcher-open-file-request', { data: filePath, key: keyFilePath });
         openFile = null;
     }
 }

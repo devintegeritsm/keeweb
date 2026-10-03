@@ -8,10 +8,11 @@ const DefaultPort = 48149;
 const logger = new Logger('storage-oauth-listener');
 
 const StorageOAuthListener = {
-    server: null,
+    listening: false,
+    unsubscribe: null,
 
     listen(storageName) {
-        if (this.server) {
+        if (this.listening) {
             this.stop();
         }
 
@@ -20,42 +21,33 @@ const StorageOAuthListener = {
             listener[key] = EventEmitter.prototype[key];
         });
 
-        const http = Launcher.req('http');
-        let resultHandled = false;
-        const server = http.createServer((req, resp) => {
-            resp.writeHead(200, 'OK', {
-                'Content-Type': 'text/html; charset=UTF-8'
-            });
-            resp.end(oauthPageTemplate({ logoSrc: KeeWebLogo }));
-            if (!resultHandled) {
-                this.stop();
-                this.handleResult(req.url, listener);
-                resultHandled = true;
+        logger.info(`Starting OAuth listener on port ${DefaultPort}...`);
+        // the server runs in the main process
+        const pageHtml = oauthPageTemplate({ logoSrc: KeeWebLogo });
+        Launcher.oauthListen(storageName, pageHtml).then(({ error }) => {
+            if (error) {
+                logger.error('Failed to start OAuth listener', error);
+                listener.emit('error', error);
+                return;
             }
-        });
-
-        const port = DefaultPort;
-
-        logger.info(`Starting OAuth listener on port ${port}...`);
-        server.listen(port);
-
-        server.on('error', (err) => {
-            logger.error('Failed to start OAuth listener', err);
-            listener.emit('error', 'Failed to start OAuth listener: ' + err);
-            server.close();
-        });
-        server.on('listening', () => {
-            this.server = server;
+            this.listening = true;
+            this.unsubscribe = Launcher.ipcOn('oauthResult', (url) => {
+                this.stop();
+                this.handleResult(url, listener);
+            });
             listener.emit('ready');
         });
 
-        listener.redirectUri = `http://localhost:${port}/oauth-result/${storageName}.html`;
+        listener.redirectUri = `http://localhost:${DefaultPort}/oauth-result/${storageName}.html`;
         return listener;
     },
 
     stop() {
-        if (this.server) {
-            this.server.close();
+        this.unsubscribe?.();
+        this.unsubscribe = null;
+        if (this.listening) {
+            this.listening = false;
+            Launcher.oauthStop();
             logger.info('OAuth listener stopped');
         }
     },

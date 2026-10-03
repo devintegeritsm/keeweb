@@ -1,14 +1,10 @@
-import * as kdbxweb from 'kdbxweb';
 import { Events } from 'framework/events';
 import { RuntimeInfo } from 'const/runtime-info';
-import { Transport } from 'comp/browser/transport';
 import { Launcher } from 'comp/launcher';
-import { Links } from 'const/links';
 import { AppSettingsModel } from 'models/app-settings-model';
 import { UpdateModel } from 'models/update-model';
 import { SemVer } from 'util/data/semver';
 import { Logger } from 'util/logger';
-import { SignatureVerifier } from 'util/data/signature-verifier';
 
 const logger = new Logger('updater');
 
@@ -98,10 +94,9 @@ const Updater = {
             this.updateCheckDate = new Date();
         }
         logger.info('Checking for update...');
-        Transport.httpGet({
-            url: Links.UpdateJson,
-            json: true,
-            success: (updateJson) => {
+        // the main process downloads and verifies updates
+        Launcher.checkForUpdate().then(
+            (updateJson) => {
                 const dt = new Date();
                 logger.info('Update check: ' + (updateJson.version || 'unknown'));
                 if (!updateJson.version || !ValidVersionRegex.test(updateJson.version)) {
@@ -148,7 +143,7 @@ const Updater = {
                     UpdateModel.set({ updateStatus: 'found' });
                 }
             },
-            error: (e) => {
+            (e) => {
                 logger.error('Update check error', e);
                 UpdateModel.set({
                     status: 'error',
@@ -158,7 +153,7 @@ const Updater = {
                 UpdateModel.save();
                 this.scheduleNextCheck();
             }
-        });
+        );
     },
 
     canAutoUpdate() {
@@ -185,126 +180,32 @@ const Updater = {
         }
         UpdateModel.set({ updateStatus: 'downloading', updateError: null });
         logger.info('Downloading update', ver);
-        const updateAssetName = this.getUpdateAssetName(ver);
-        if (!updateAssetName) {
-            logger.error('Empty updater asset name for', Launcher.platform(), Launcher.arch());
-            return;
-        }
-        const updateUrlBasePath = Links.UpdateBasePath.replace('{ver}', ver);
-        const updateAssetUrl = updateUrlBasePath + updateAssetName;
-        Transport.httpGet({
-            url: updateAssetUrl,
-            file: updateAssetName,
-            cleanupOldFiles: true,
-            cache: true,
-            success: (assetFilePath) => {
-                logger.info('Downloading update signatures');
-                Transport.httpGet({
-                    url: updateUrlBasePath + 'Verify.sign.sha256',
-                    text: true,
-                    file: updateAssetName + '.sign',
-                    cleanupOldFiles: true,
-                    cache: true,
-                    success: (assetFileSignaturePath) => {
-                        this.verifySignature(assetFilePath, updateAssetName, (err, valid) => {
-                            if (err || !valid) {
-                                UpdateModel.set({
-                                    updateStatus: 'error',
-                                    updateError: err
-                                        ? 'Error verifying update signature'
-                                        : 'Invalid update signature'
-                                });
-                                Launcher.deleteFile(assetFilePath);
-                                Launcher.deleteFile(assetFileSignaturePath);
-                                return;
-                            }
-                            logger.info('Update is ready', assetFilePath);
-                            UpdateModel.set({ updateStatus: 'ready', updateError: null });
-                            if (!startedByUser) {
-                                Events.emit('update-app');
-                            }
-                            if (typeof successCallback === 'function') {
-                                successCallback();
-                            }
-                        });
-                    },
-                    error(e) {
-                        logger.error('Error downloading update signatures', e);
-                        UpdateModel.set({
-                            updateStatus: 'error',
-                            updateError: 'Error downloading update signatures'
-                        });
-                    }
-                });
+        Launcher.downloadUpdate(ver).then(
+            () => {
+                logger.info('Update is ready', ver);
+                UpdateModel.set({ updateStatus: 'ready', updateError: null });
+                if (!startedByUser) {
+                    Events.emit('update-app');
+                }
+                if (typeof successCallback === 'function') {
+                    successCallback();
+                }
             },
-            error(e) {
+            (e) => {
                 logger.error('Error downloading update', e);
                 UpdateModel.set({
                     updateStatus: 'error',
-                    updateError: 'Error downloading update'
+                    updateError: e === 'Invalid update signature' ? e : 'Error downloading update'
                 });
             }
-        });
-    },
-
-    verifySignature(assetFilePath, assetName, callback) {
-        logger.info('Verifying update signature', assetName);
-        const fs = Launcher.req('fs');
-        const signaturesTxt = fs.readFileSync(assetFilePath + '.sign', 'utf8');
-        const assetSignatureLine = signaturesTxt
-            .split('\n')
-            .find((line) => line.endsWith(assetName));
-        if (!assetSignatureLine) {
-            logger.error('Signature not found for asset', assetName);
-            callback('Asset signature not found');
-            return;
-        }
-        const signature = kdbxweb.ByteUtils.hexToBytes(assetSignatureLine.split(' ')[0]);
-        const fileBytes = fs.readFileSync(assetFilePath);
-        SignatureVerifier.verify(fileBytes, signature)
-            .catch((e) => {
-                logger.error('Error verifying signature', e);
-                callback('Error verifying signature');
-            })
-            .then((valid) => {
-                logger.info(`Update asset signature is ${valid ? 'valid' : 'invalid'}`);
-                callback(undefined, valid);
-            });
-    },
-
-    getUpdateAssetName(ver) {
-        const platform = Launcher.platform();
-        const arch = Launcher.arch();
-        switch (platform) {
-            case 'win32':
-                switch (arch) {
-                    case 'x64':
-                        return `KeeWeb-${ver}.win.x64.exe`;
-                    case 'ia32':
-                        return `KeeWeb-${ver}.win.ia32.exe`;
-                    case 'arm64':
-                        return `KeeWeb-${ver}.win.arm64.exe`;
-                }
-                break;
-            case 'darwin':
-                switch (arch) {
-                    case 'x64':
-                        return `KeeWeb-${ver}.mac.x64.dmg`;
-                    case 'arm64':
-                        return `KeeWeb-${ver}.mac.arm64.dmg`;
-                }
-                break;
-        }
-        return undefined;
+        );
     },
 
     installAndRestart() {
         if (!Launcher) {
             return;
         }
-        const updateAssetName = this.getUpdateAssetName(UpdateModel.lastVersion);
-        const updateFilePath = Transport.cacheFilePath(updateAssetName);
-        Launcher.requestRestartAndUpdate(updateFilePath);
+        Launcher.requestRestartAndUpdate(UpdateModel.lastVersion);
     }
 };
 

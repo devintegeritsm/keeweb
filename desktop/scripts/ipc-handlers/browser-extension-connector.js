@@ -2,18 +2,19 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
-const { ipcMain, app } = require('electron');
+const { app } = require('electron');
+const { handle } = require('../ipc-validation');
 const { Logger } = require('../logger');
 const { getProcessInfo } = require('../util/process-utils');
 const { ExtensionIds } = require('../const/extension-ids');
 const browserExtensionInstaller = require('../util/browser-extension-installer');
 
-ipcMain.handle('browserExtensionConnectorStart', browserExtensionConnectorStart);
-ipcMain.handle('browserExtensionConnectorStop', browserExtensionConnectorStop);
-ipcMain.handle('browserExtensionConnectorEnable', browserExtensionConnectorEnable);
-ipcMain.handle('browserExtensionConnectorSocketResult', browserExtensionConnectorSocketResult);
-ipcMain.handle('browserExtensionConnectorSocketEvent', browserExtensionConnectorSocketEvent);
-ipcMain.handle('browserExtensionConnectorCloseSocket', browserExtensionConnectorCloseSocket);
+handle('browserExtensionConnectorStart', browserExtensionConnectorStart);
+handle('browserExtensionConnectorStop', browserExtensionConnectorStop);
+handle('browserExtensionConnectorEnable', browserExtensionConnectorEnable);
+handle('browserExtensionConnectorSocketResult', browserExtensionConnectorSocketResult);
+handle('browserExtensionConnectorSocketEvent', browserExtensionConnectorSocketEvent);
+handle('browserExtensionConnectorCloseSocket', browserExtensionConnectorCloseSocket);
 
 const logger = new Logger('browser-extension-connector');
 
