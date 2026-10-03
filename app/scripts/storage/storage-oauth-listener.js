@@ -24,11 +24,13 @@ const StorageOAuthListener = {
         logger.info(`Starting OAuth listener on port ${DefaultPort}...`);
         // the server runs in the main process
         const pageHtml = oauthPageTemplate({ logoSrc: KeeWebLogo });
-        Launcher.oauthListen(storageName, pageHtml).then(({ error }) => {
+        const onError = (error) => {
+            logger.error('Failed to start OAuth listener', error);
+            listener.emit('error', String(error));
+        };
+        Launcher.oauthListen(storageName, pageHtml).then(({ error } = {}) => {
             if (error) {
-                logger.error('Failed to start OAuth listener', error);
-                listener.emit('error', error);
-                return;
+                return onError(error);
             }
             this.listening = true;
             this.unsubscribe = Launcher.ipcOn('oauthResult', (url) => {
@@ -36,7 +38,7 @@ const StorageOAuthListener = {
                 this.handleResult(url, listener);
             });
             listener.emit('ready');
-        });
+        }, onError);
 
         listener.redirectUri = `http://localhost:${DefaultPort}/oauth-result/${storageName}.html`;
         return listener;

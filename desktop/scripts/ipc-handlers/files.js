@@ -25,16 +25,8 @@ handleFs('fsWriteFile', async (filePath, data) => {
 });
 handleFs('fsStat', async (filePath) => {
     if (!canAccessFile(filePath) && !canAccessFolder(filePath)) {
-        // allowing a folder here is how backups get their folder, it's asked about like a file
-        const stat = await fs.promises.stat(filePath).catch(() => null);
-        if (!stat) {
-            throw Object.assign(new Error(`Not found: ${filePath}`), { code: 'ENOENT' });
-        }
-        if (stat.isDirectory()) {
-            await ensureFolderAccess(filePath);
-        } else {
-            await ensureFileAccess(filePath);
-        }
+        // not even existence is revealed; for a backup folder this leads to fsMkdir, which asks
+        throw Object.assign(new Error(`Not found: ${filePath}`), { code: 'ENOENT' });
     }
     const stat = await fs.promises.stat(filePath);
     return { mtime: stat.mtimeMs, size: stat.size, isDirectory: stat.isDirectory() };

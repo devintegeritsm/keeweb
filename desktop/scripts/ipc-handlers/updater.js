@@ -81,10 +81,28 @@ function getAssetName(version, platform = process.platform, arch = process.arch)
     return undefined;
 }
 
+function isNewerVersion(version, currentVersion) {
+    const [numbers, prerelease] = version.split('-');
+    const [currentNumbers, currentPrerelease] = currentVersion.split('-');
+    const parts = numbers.split('.').map(Number);
+    const currentParts = currentNumbers.split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+        if (parts[i] !== currentParts[i]) {
+            return parts[i] > currentParts[i];
+        }
+    }
+    // a release is newer than its pre-release
+    return !prerelease && !!currentPrerelease;
+}
+
 function getAsset(version) {
     // the version is used in file paths and installer arguments
     if (typeof version !== 'string' || !ValidVersionRegex.test(version)) {
         throw new Error('Invalid version');
+    }
+    // older releases are signed as well, but must not replace a newer one
+    if (!isNewerVersion(version, app.getVersion())) {
+        throw new Error(`Not newer than the installed version: ${version}`);
     }
     const name = getAssetName(version);
     if (!name) {
@@ -197,4 +215,4 @@ function downloadToFile(url, filePath) {
     );
 }
 
-module.exports = { getAsset, getAssetName };
+module.exports = { getAsset, getAssetName, isNewerVersion };

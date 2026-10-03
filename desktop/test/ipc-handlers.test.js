@@ -6,7 +6,7 @@ const mock = require('./mock-electron');
 
 const { isAllowedYkmanCommand } = require('../scripts/ipc-handlers/external-tools');
 const { isHttpRequestAllowed } = require('../scripts/ipc-handlers/launcher');
-const { getAsset, getAssetName } = require('../scripts/ipc-handlers/updater');
+const { getAsset, getAssetName, isNewerVersion } = require('../scripts/ipc-handlers/updater');
 const { verifyFileSignature } = require('../scripts/update-signature');
 const { handle } = require('../scripts/ipc-validation');
 
@@ -95,6 +95,23 @@ describe('updates', () => {
         }
     });
 
+    it('compares versions', () => {
+        expect(isNewerVersion('1.19.0', '1.18.9')).to.be.true;
+        expect(isNewerVersion('1.18.10', '1.18.9')).to.be.true;
+        expect(isNewerVersion('2.0.0', '1.99.99')).to.be.true;
+        expect(isNewerVersion('1.18.9', '1.18.9-beta.1')).to.be.true;
+        expect(isNewerVersion('1.18.9', '1.18.9')).to.be.false;
+        expect(isNewerVersion('1.18.8', '1.18.9')).to.be.false;
+        expect(isNewerVersion('1.9.0', '1.18.9')).to.be.false;
+        expect(isNewerVersion('1.18.9-beta.1', '1.18.9')).to.be.false;
+    });
+
+    it("doesn't download or install older versions", () => {
+        for (const version of ['1.18.9', '1.18.8', '1.5.0']) {
+            expect(() => getAsset(version)).to.throw('Not newer');
+        }
+    });
+
     it('verifies update signatures', async () => {
         const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
             modulusLength: 2048,
@@ -110,5 +127,55 @@ describe('updates', () => {
 
         fs.appendFileSync(filePath, 'x');
         expect(await verifyFileSignature(filePath, signature, [publicKey])).to.be.false;
+    });
+});
+
+describe('files', () => {
+    before(() => {
+        require('../scripts/ipc-handlers/files');
+    });
+
+    it("doesn't reveal whether files the user didn't choose exist", async () => {
+        mock.reset();
+        const existing = path.join(mock.tempDir, 'existing.txt');
+        fs.writeFileSync(existing, 'x');
+        const missing = path.join(mock.tempDir, 'missing.txt');
+        const resExisting = await mock.handlers.fsStat(mock.trustedEvent(), existing);
+        const resMissing = await mock.handlers.fsStat(mock.trustedEvent(), missing);
+        expect(JSON.stringify(resExisting).replace(existing, 'path')).to.eql(
+            JSON.stringify(resMissing).replace(missing, 'path')
+        );
+        expect(resExisting.error.code).to.eql('ENOENT');
+        expect(resMissing.error.code).to.eql('ENOENT');
+        expect(mock.prompts.length).to.eql(0);
+    });
+
+    it('stats files in the app folders', async () => {
+        const offlineFiles = path.join(mock.userData, 'OfflineFiles');
+        fs.mkdirSync(offlineFiles, { recursive: true });
+        fs.writeFileSync(path.join(offlineFiles, 'id'), 'abc');
+        const res = await mock.handlers.fsStat(mock.trustedEvent(), path.join(offlineFiles, 'id'));
+        expect(res.result.size).to.eql(3);
+        expect(res.result.isDirectory).to.be.false;
+    });
+});
+
+describe('links', () => {
+    before(() => {
+        mock.electron.shell.openExternal = (url) => {
+            mock.openedLinks.push(url);
+        };
+        mock.openedLinks = [];
+    });
+
+    it('opens only web and mail links', async () => {
+        const open = (url) => mock.handlers.launcherOpenLink(mock.trustedEvent(), url);
+        await open('https://keeweb.info');
+        await open('mailto:x@example.com');
+        await open('file:///etc/passwd');
+        await open('javascript:alert(1)');
+        await open('not a url');
+        await open(undefined);
+        expect(mock.openedLinks).to.eql(['https://keeweb.info', 'mailto:x@example.com']);
     });
 });

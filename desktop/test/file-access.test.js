@@ -135,6 +135,47 @@ describe('file-access', () => {
         expect(fileAccess.canAccessFile(path.join(dir, 'local.kdbx'))).to.be.false;
     });
 
+    it("doesn't migrate when saved grants can't be read", async () => {
+        mock.configs['file-access'] = new Error('Read error');
+        mock.configs['file-info'] = JSON.stringify([
+            { storage: 'file', path: path.join(dir, 'local.kdbx') }
+        ]);
+        await fileAccess.load();
+        expect(fileAccess.canAccessFile(path.join(dir, 'local.kdbx'))).to.be.false;
+    });
+
+    it("doesn't grant files planted in the list of recent files later", async () => {
+        await fileAccess.load();
+        mock.configs['file-info'] = JSON.stringify([
+            { storage: 'file', path: path.join(dir, 'planted.kdbx') }
+        ]);
+        await fileAccess.load();
+        let error;
+        await fileAccess
+            .ensureFileAccess(path.join(dir, 'planted.kdbx'), { prompt: false })
+            .catch((e) => (error = e));
+        expect(error.code).to.eql('EACCES');
+    });
+
+    it('shows one prompt at a time and stops after three denials', async () => {
+        mock.electron.dialog.promptDelay = 5;
+        const requests = ['a', 'b', 'c', 'd', 'e'].map((name) =>
+            fileAccess.ensureFileAccess(path.join(dir, `${name}.kdbx`)).catch((e) => e.code)
+        );
+        expect(await Promise.all(requests)).to.eql(Array(5).fill('EACCES'));
+        expect(mock.electron.dialog.maxActivePrompts).to.eql(1);
+        expect(mock.prompts.length).to.eql(3);
+    });
+
+    it('counts only denials in a row', async () => {
+        const responses = [1, 1, 0, 1, 1];
+        for (const [ix, response] of responses.entries()) {
+            mock.electron.dialog.promptResponse = response;
+            await fileAccess.ensureFileAccess(path.join(dir, `${ix}.kdbx`)).catch(() => {});
+        }
+        expect(mock.prompts.length).to.eql(5);
+    });
+
     it('keeps saved grants when a file is granted while loading', async () => {
         mock.configs['file-access'] = JSON.stringify({
             files: [path.join(dir, 'saved.kdbx')],

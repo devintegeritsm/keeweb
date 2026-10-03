@@ -11,11 +11,15 @@ const OwnFolderNames = ['OfflineFiles', 'PluginFiles', 'FilesCache'];
 // folders are allowed for backups, only database files can be written there
 const FolderFileExtensions = ['.kdbx', '.bak'];
 const caseInsensitive = process.platform === 'win32' || process.platform === 'darwin';
+// after this many denials in a row the page is probably not asking for the user, stop asking
+const MaxDeniedPrompts = 3;
 
 const files = new Map();
 const folders = new Map();
 const deniedInSession = new Set();
 const pendingPrompts = new Map();
+let promptQueue = Promise.resolve();
+let deniedPrompts = 0;
 let loadPromise;
 
 function normalizePath(filePath) {
@@ -88,24 +92,29 @@ function grantFolder(folderPath) {
 
 async function requestAccess(filePath, kind) {
     const promptKey = `${kind}:${pathKey(filePath)}`;
-    if (deniedInSession.has(promptKey)) {
+    if (deniedInSession.has(promptKey) || deniedPrompts >= MaxDeniedPrompts) {
         return false;
     }
     if (!pendingPrompts.has(promptKey)) {
-        const prompt = showPrompt(filePath, kind)
+        // one dialog at a time
+        const prompt = promptQueue
+            .then(() => (deniedPrompts >= MaxDeniedPrompts ? false : showPrompt(filePath, kind)))
             .then((allowed) => {
                 if (allowed) {
+                    deniedPrompts = 0;
                     if (kind === 'folder') {
                         grantFolder(filePath);
                     } else {
                         grantFile(filePath);
                     }
                 } else {
+                    deniedPrompts++;
                     deniedInSession.add(promptKey);
                 }
                 return allowed;
             })
             .finally(() => pendingPrompts.delete(promptKey));
+        promptQueue = prompt.catch(() => {});
         pendingPrompts.set(promptKey, prompt);
     }
     return pendingPrompts.get(promptKey);
@@ -178,21 +187,30 @@ function load() {
 }
 
 async function loadConfig() {
-    let config;
+    let data;
     try {
-        config = JSON.parse((await app.loadConfig(ConfigName)) || 'null');
-    } catch {}
-    if (config) {
-        for (const filePath of config.files || []) {
-            files.set(pathKey(filePath), filePath);
-        }
-        for (const folderPath of config.folders || []) {
-            folders.set(pathKey(folderPath), folderPath);
-        }
-    } else {
+        data = await app.loadConfig(ConfigName);
+    } catch {
+        // without the saved grants the user is asked again, nothing is migrated
+        return;
+    }
+    if (data === null) {
+        // the first start with access checks; the page can write file-info,
+        // so this runs only once and before the app window is created
         await migrateFromFileInfo();
         const config = { files: [...files.values()], folders: [...folders.values()] };
         await app.saveConfig(ConfigName, JSON.stringify(config)).catch(() => {});
+        return;
+    }
+    let config;
+    try {
+        config = JSON.parse(data);
+    } catch {}
+    for (const filePath of config?.files || []) {
+        files.set(pathKey(filePath), filePath);
+    }
+    for (const folderPath of config?.folders || []) {
+        folders.set(pathKey(folderPath), folderPath);
     }
 }
 

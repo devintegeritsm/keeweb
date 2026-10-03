@@ -23,8 +23,14 @@ const electron = {
     app: {
         getPath: (name) => (name === 'userData' ? userData : path.join(tempDir, name)),
         getAppPath: () => path.join(tempDir, 'app'),
+        getVersion: () => '1.18.9',
         getMainWindow: () => mainWindow,
-        loadConfig: async (name) => configs[name] ?? null,
+        loadConfig: async (name) => {
+            if (configs[name] instanceof Error) {
+                throw configs[name];
+            }
+            return configs[name] ?? null;
+        },
         saveConfig: async (name, data) => {
             configs[name] = data;
         },
@@ -40,9 +46,17 @@ const electron = {
     },
     dialog: {
         promptResponse: 1,
+        promptDelay: 0,
+        activePrompts: 0,
+        maxActivePrompts: 0,
         showMessageBox: async (win, options) => {
+            const dialog = electron.dialog;
             prompts.push(options);
-            return { response: electron.dialog.promptResponse };
+            dialog.activePrompts++;
+            dialog.maxActivePrompts = Math.max(dialog.maxActivePrompts, dialog.activePrompts);
+            await new Promise((resolve) => setTimeout(resolve, dialog.promptDelay));
+            dialog.activePrompts--;
+            return { response: dialog.promptResponse };
         }
     },
     clipboard: {},
@@ -68,6 +82,8 @@ function reset() {
     }
     prompts.length = 0;
     electron.dialog.promptResponse = 1;
+    electron.dialog.promptDelay = 0;
+    electron.dialog.maxActivePrompts = 0;
 }
 
 module.exports = {

@@ -8,9 +8,10 @@ const Port = 48149;
 
 let server = null;
 
-handle('oauthListen', (e, { storageName, pageHtml }) => {
+handle('oauthListen', (e, options) => {
+    const { storageName, pageHtml } = options || {};
     if (!/^[a-z]+$/.test(storageName) || typeof pageHtml !== 'string') {
-        throw new Error('Bad OAuth listener options');
+        return { error: 'Bad OAuth listener options' };
     }
     stop();
     return new Promise((resolve) => {

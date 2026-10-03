@@ -61,7 +61,13 @@ handle('launcherSaveConfig', (e, name, data) => {
     return app.saveConfig(name, data);
 });
 handle('launcherOpenLink', (e, url) => {
-    if (ExternalLinkProtocols.includes(new URL(url).protocol)) {
+    let protocol;
+    try {
+        protocol = new URL(url).protocol;
+    } catch {
+        return;
+    }
+    if (ExternalLinkProtocols.includes(protocol)) {
         return shell.openExternal(url);
     }
 });

@@ -130,6 +130,11 @@ main.on('ready', () => {
 
     settingsPromise
         .then(() => {
+            // file access is loaded before the page can change files it's migrated from
+            return require('./scripts/file-access').load();
+        })
+        .then(() => {
+            logProgress('loading file access');
             createMainWindow();
             setupIpcHandlers();
             setGlobalShortcuts(appSettings);
