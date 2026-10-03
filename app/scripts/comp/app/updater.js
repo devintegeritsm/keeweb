@@ -12,6 +12,8 @@ import { SignatureVerifier } from 'util/data/signature-verifier';
 
 const logger = new Logger('updater');
 
+const ValidVersionRegex = /^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$/;
+
 const Updater = {
     UpdateInterval: 1000 * 60 * 60 * 24,
     MinUpdateTimeout: 500,
@@ -102,8 +104,11 @@ const Updater = {
             success: (updateJson) => {
                 const dt = new Date();
                 logger.info('Update check: ' + (updateJson.version || 'unknown'));
-                if (!updateJson.version) {
-                    const errMsg = 'No version info found';
+                if (!updateJson.version || !ValidVersionRegex.test(updateJson.version)) {
+                    // the version is used in file paths and installer arguments
+                    const errMsg = updateJson.version
+                        ? 'Invalid version info'
+                        : 'No version info found';
                     UpdateModel.set({
                         status: 'error',
                         lastCheckDate: dt,

@@ -548,6 +548,9 @@ class SettingsGeneralView extends View {
                 header: Locale.setGenTryBetaWarning,
                 body: Locale.setGenTryBetaWarningBody
             });
+        } else if (Launcher) {
+            // the desktop window has node integration, remote content must never be loaded there
+            Launcher.openLink(Links.BetaWebApp);
         } else {
             location.href = Links.BetaWebApp;
         }

@@ -188,6 +188,8 @@ class EntryModel extends Model {
                 this.entry.pushHistory();
             }
             this.file.setModified();
+        } else {
+            this.file.countEdit();
         }
         if (this.isJustCreated) {
             this.isJustCreated = false;

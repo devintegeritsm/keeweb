@@ -14,6 +14,12 @@ import { ChalRespCalculator } from 'comp/app/chal-resp-calculator';
 
 const logger = new Logger('file');
 
+const NewFileKdfParams = {
+    memory: 64 * 1024 * 1024,
+    iterations: 3,
+    parallelism: 4
+};
+
 class FileModel extends Model {
     constructor(data) {
         super({
@@ -96,6 +102,7 @@ class FileModel extends Model {
         const password = kdbxweb.ProtectedValue.fromString('');
         const credentials = new kdbxweb.Credentials(password);
         this.db = kdbxweb.Kdbx.create(credentials, name);
+        this.setNewFileKdf();
         this.name = name;
         this.readModel();
         this.set({ active: true, created: true, name });
@@ -110,6 +117,7 @@ class FileModel extends Model {
             kdbxweb.Kdbx.loadXml(fileXml, credentials)
                 .then((db) => {
                     this.db = db;
+                    this.setNewFileKdf();
                 })
                 .then(() => {
                     this.readModel();
@@ -413,7 +421,17 @@ class FileModel extends Model {
     setModified() {
         if (!this.demo) {
             this.set({ modified: true, dirty: true });
+            this.countEdit();
         }
+    }
+
+    countEdit() {
+        // used to detect edits made while the file is being synced
+        this.set({ editCounter: this.editCounter + 1 }, { silent: true });
+    }
+
+    hasEditsSinceSyncStart() {
+        return this.editCounter !== this.syncStartEditCounter;
     }
 
     getData(cb) {
@@ -465,20 +483,22 @@ class FileModel extends Model {
     }
 
     setSyncProgress() {
-        this.set({ syncing: true });
+        this.set({ syncing: true, syncStartEditCounter: this.editCounter });
     }
 
     setSyncComplete(path, storage, error) {
-        if (!error) {
+        // edits made during sync may be missing in the saved data, keep them as unsaved
+        const editedDuringSync = this.hasEditsSinceSyncStart();
+        if (!error && !editedDuringSync) {
             this.db.removeLocalEditState();
         }
-        const modified = this.modified && !!error;
+        const modified = (this.modified && !!error) || editedDuringSync;
         this.set({
             created: false,
             path: path || this.path,
             storage: storage || this.storage,
             modified,
-            dirty: error ? this.dirty : false,
+            dirty: editedDuringSync || (error ? this.dirty : false),
             syncing: false,
             syncError: error
         });
@@ -635,7 +655,8 @@ class FileModel extends Model {
                 this.db.header.kdfParameters.set('P', ValueType.UInt32, value);
                 break;
             case 'rounds':
-                this.db.header.kdfParameters.set('R', ValueType.UInt32, value);
+                // KeePass reads rounds as UInt64 and ignores values of other types
+                this.db.header.kdfParameters.set('R', ValueType.UInt64, kdbxweb.Int64.from(value));
                 break;
             default:
                 return;
@@ -716,6 +737,19 @@ class FileModel extends Model {
         this.readModel();
     }
 
+    setNewFileKdf() {
+        // kdbxweb defaults to Argon2d with 1 MiB of memory, which is too weak for new files
+        if (!this.db.header.kdfParameters) {
+            return;
+        }
+        this.db.setKdf(kdbxweb.Consts.KdfId.Argon2id);
+        const ValueType = kdbxweb.VarDictionary.ValueType;
+        const kdfParameters = this.db.header.kdfParameters;
+        kdfParameters.set('M', ValueType.UInt64, kdbxweb.Int64.from(NewFileKdfParams.memory));
+        kdfParameters.set('I', ValueType.UInt64, kdbxweb.Int64.from(NewFileKdfParams.iterations));
+        kdfParameters.set('P', ValueType.UInt32, NewFileKdfParams.parallelism);
+    }
+
     static createKeyFileWithHash(hash) {
         const hashData = kdbxweb.ByteUtils.base64ToBytes(hash);
         const hexHash = kdbxweb.ByteUtils.bytesToHex(hashData);
@@ -739,6 +773,8 @@ FileModel.defineModelProperties({
     storage: null,
     modified: false,
     dirty: false,
+    editCounter: 0,
+    syncStartEditCounter: 0,
     active: false,
     created: false,
     demo: false,

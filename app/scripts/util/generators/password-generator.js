@@ -89,8 +89,9 @@ const PasswordGenerator = {
         const upper = [];
         let i;
         if (opts.upper) {
+            const randomBytes = kdbxweb.CryptoEngine.random(pass.length);
             for (i = 0; i < pass.length; i += 8) {
-                upper.push(Math.floor(Math.random() * opts.length));
+                upper.push(randomBytes[i] % opts.length);
             }
         }
         for (i = 0; i < pass.length; i++) {

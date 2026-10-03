@@ -48,6 +48,22 @@ describe('PasswordGenerator', () => {
         }
     });
 
+    it('should not use Math.random for pronounceable passwords', () => {
+        const mathRandom = Math.random;
+        Math.random = () => 0.5;
+        try {
+            const passwords = new Set();
+            for (let i = 0; i < 100; i++) {
+                passwords.add(
+                    PasswordGenerator.generate({ length: 16, name: 'Pronounceable', upper: true })
+                );
+            }
+            expect(passwords.size).to.eql(100);
+        } finally {
+            Math.random = mathRandom;
+        }
+    });
+
     it('should generate a password with pattern', () => {
         expect(
             PasswordGenerator.generate({

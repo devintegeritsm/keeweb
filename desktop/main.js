@@ -171,7 +171,8 @@ main.on('web-contents-created', (event, contents) => {
         return { action: 'deny' };
     });
     contents.on('will-navigate', (e, url) => {
-        if (!url.startsWith('https://beta.keeweb.info/') && !url.startsWith(htmlPath)) {
+        // the window has node integration, never let it navigate to a remote origin
+        if (!url.startsWith(htmlPath)) {
             e.preventDefault();
             logger.warn(`Prevented navigation: ${url}`);
         }
@@ -918,12 +919,30 @@ function saveConfig(name, data, key) {
 
         const ext = key ? 'dat' : 'json';
         const configFilePath = path.join(main.getPath('userData'), `${name}.${ext}`);
-        fs.writeFile(configFilePath, data, (err) => {
+        const writeInPlace = () => {
+            fs.writeFile(configFilePath, data, (err) => {
+                if (err) {
+                    reject(`Error writing config ${name}: ${err}`);
+                } else {
+                    resolve();
+                }
+            });
+        };
+        // write to a temp file and rename it, so a crash while writing can't break the config
+        const tmpFilePath = `${configFilePath}.${process.pid}.${Date.now()}.tmp`;
+        fs.writeFile(tmpFilePath, data, (err) => {
             if (err) {
-                reject(`Error writing config ${name}: ${err}`);
-            } else {
-                resolve();
+                fs.unlink(tmpFilePath, () => {});
+                return reject(`Error writing config ${name}: ${err}`);
             }
+            fs.rename(tmpFilePath, configFilePath, (err) => {
+                if (err) {
+                    logger.warn(`Error replacing config ${name}, writing in place: ${err}`);
+                    fs.unlink(tmpFilePath, () => {});
+                    return writeInPlace();
+                }
+                resolve();
+            });
         });
     });
 }

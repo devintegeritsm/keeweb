@@ -19,6 +19,6 @@ const IdleTracker = {
     }
 };
 
-Events.on('power-monitor-resume', () => IdleTracker.checkIdle);
+Events.on('power-monitor-resume', () => IdleTracker.checkIdle());
 
 export { IdleTracker };

@@ -120,7 +120,7 @@ ready(() => {
                 const configParam = getConfigParam();
                 if (configParam) {
                     return appModel
-                        .loadConfig(configParam)
+                        .loadConfig(configParam.location, { fromMeta: configParam.fromMeta })
                         .then(() => {
                             SettingsManager.setBySettings();
                         })
@@ -202,11 +202,11 @@ ready(() => {
     function getConfigParam() {
         const metaConfig = document.head.querySelector('meta[name=kw-config]');
         if (metaConfig && metaConfig.content && metaConfig.content[0] !== '(') {
-            return metaConfig.content;
+            return { location: metaConfig.content, fromMeta: true };
         }
         const match = location.search.match(/[?&]config=([^&]+)/i);
         if (match && match[1]) {
-            return match[1];
+            return { location: match[1], fromMeta: false };
         }
     }
 });

@@ -4,6 +4,9 @@
  */
 
 // removed node.js deps, making it available to load in browser
+// without a seed, each step uses crypto random numbers instead of a hash of the previous one
+
+import * as kdbxweb from 'kdbxweb';
 
 /**
  * Phonetics that sound best before a vowel.
@@ -223,7 +226,7 @@ function getOptions(overrides) {
     const options = {};
     overrides = overrides || {};
     options.length = overrides.length || 16;
-    options.seed = overrides.seed || Math.random();
+    options.seed = overrides.seed;
     options.phoneticSimplicity = overrides.phoneticSimplicity
         ? Math.max(overrides.phoneticSimplicity, 1)
         : 5;
@@ -253,8 +256,33 @@ function getNextPhonetic(phoneticSet, simpleCap, wordObj, forceSimple) {
     const simple = (wordObj.numeric + deriv) % wordObj.opts.phoneticSimplicity > 0;
     const cap = simple || forceSimple ? simpleCap : phoneticSet.length;
     const phonetic = phoneticSet[wordObj.numeric % cap];
-    wordObj.numeric = getNumericHash(wordObj.numeric + wordObj.word);
+    wordObj.numeric = getNextNumeric(wordObj);
     return phonetic;
+}
+
+/**
+ * Gets the next numeric for the word: a hash of the previous one for seeded
+ * generation, otherwise a cryptographically secure random number.
+ *
+ * @param {{word, numeric, lastSkippedPre, lastSkippedPost, opts}} wordObj The
+ *      word object for which the numeric is being calculated
+ * @returns {number}
+ */
+function getNextNumeric(wordObj) {
+    if (wordObj.opts.seed === undefined) {
+        return getRandomNumeric();
+    }
+    return getNumericHash(wordObj.numeric + wordObj.word);
+}
+
+/**
+ * Generates a cryptographically secure random 32-bit unsigned integer.
+ *
+ * @returns {number}
+ */
+function getRandomNumeric() {
+    const bytes = kdbxweb.CryptoEngine.random(4);
+    return new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0);
 }
 
 /**
@@ -307,7 +335,7 @@ function generate(options) {
     options = getOptions(options);
     const length = options.length;
     const wordObj = {
-        numeric: getNumericHash(options.seed),
+        numeric: options.seed === undefined ? getRandomNumeric() : getNumericHash(options.seed),
         lastSkippedPost: false,
         word: '',
         opts: options

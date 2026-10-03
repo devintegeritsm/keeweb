@@ -2,6 +2,9 @@ import * as kdbxweb from 'kdbxweb';
 import { StorageBase } from 'storage/storage-base';
 import { Locale } from 'util/locale';
 
+// ':' is not a base64 character, so this can't be confused with a plain btoa result
+const Utf8Base64Prefix = 'utf8:';
+
 class StorageWebDav extends StorageBase {
     name = 'webdav';
     icon = 'server';
@@ -209,10 +212,11 @@ class StorageWebDav extends StorageBase {
                                         .replace(/[^/]*$/, movePath);
                                 }
                             }
-                            // prevent double encoding, see #1729
-                            const encodedMovePath = /%[A-Z0-9]{2}/.test(movePath)
-                                ? movePath
-                                : encodeURI(movePath);
+                            // keep existing escape sequences to prevent double encoding, see #1729
+                            const encodedMovePath = movePath
+                                .split(/(%[0-9A-Fa-f]{2})/)
+                                .map((part, ix) => (ix % 2 ? part : encodeURI(part)))
+                                .join('');
                             this._request(
                                 {
                                     ...saveOpts,
@@ -265,7 +269,7 @@ class StorageWebDav extends StorageBase {
             const fileId = file.uuid;
             const password = opts.password;
             const encpass = this._xorString(password, fileId);
-            result.encpass = btoa(encpass);
+            result.encpass = this._stringToBase64(encpass);
         }
         return result;
     }
@@ -274,10 +278,28 @@ class StorageWebDav extends StorageBase {
         const result = { user: opts.user, password: opts.password };
         if (opts.encpass) {
             const fileId = file.uuid;
-            const encpass = atob(opts.encpass);
+            const encpass = this._base64ToString(opts.encpass);
             result.password = this._xorString(encpass, fileId);
         }
         return result;
+    }
+
+    _stringToBase64(str) {
+        try {
+            return btoa(str);
+        } catch {
+            // btoa throws on characters outside of Latin-1, encode them as UTF-8 instead
+            const bytes = kdbxweb.ByteUtils.stringToBytes(str);
+            return Utf8Base64Prefix + kdbxweb.ByteUtils.bytesToBase64(bytes);
+        }
+    }
+
+    _base64ToString(str) {
+        if (str.startsWith(Utf8Base64Prefix)) {
+            const bytes = kdbxweb.ByteUtils.base64ToBytes(str.substr(Utf8Base64Prefix.length));
+            return kdbxweb.ByteUtils.bytesToString(bytes);
+        }
+        return atob(str);
     }
 
     _xorString(str, another) {
@@ -367,7 +389,7 @@ class StorageWebDav extends StorageBase {
         if (config.user) {
             xhr.setRequestHeader(
                 'Authorization',
-                'Basic ' + btoa(config.user + ':' + config.password)
+                'Basic ' + this._basicAuthCredentials(config.user, config.password)
             );
         }
         if (config.headers) {
@@ -386,15 +408,20 @@ class StorageWebDav extends StorageBase {
         }
     }
 
+    _basicAuthCredentials(user, password) {
+        const credentials = user + ':' + password;
+        try {
+            return btoa(credentials);
+        } catch {
+            // characters outside of Latin-1 are sent as UTF-8, see RFC 7617
+            return kdbxweb.ByteUtils.bytesToBase64(kdbxweb.ByteUtils.stringToBytes(credentials));
+        }
+    }
+
     _calcStatByContent(xhr) {
-        if (
-            xhr.status !== 200 ||
-            xhr.responseType !== 'arraybuffer' ||
-            !xhr.response ||
-            !xhr.response.byteLength
-        ) {
+        if (xhr.status !== 200 || xhr.responseType !== 'arraybuffer' || !xhr.response) {
             this.logger.debug('Cannot calculate rev by content');
-            return null;
+            return Promise.resolve(null);
         }
         return kdbxweb.CryptoEngine.sha256(xhr.response).then((hash) => {
             const rev = kdbxweb.ByteUtils.bytesToHex(hash).substr(0, 10);

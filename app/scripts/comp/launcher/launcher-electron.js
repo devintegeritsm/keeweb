@@ -83,7 +83,61 @@ const Launcher = {
         return this.req('path').join(...parts);
     },
     writeFile(path, data, callback) {
-        this.req('fs').writeFile(path, window.Buffer.from(data), callback);
+        this.writeFileReplacing(path, window.Buffer.from(data)).then(() => callback(), callback);
+    },
+    async writeFileReplacing(path, data) {
+        // write to a temp file and rename it, so a crash or a full disk can't truncate the file
+        const fs = this.req('fs').promises;
+        const pathModule = this.req('path');
+        let targetPath = path;
+        let mode;
+        try {
+            // replace the file a symlink points to, not the symlink itself
+            targetPath = await fs.realpath(path);
+            mode = (await fs.stat(targetPath)).mode & 0o777;
+        } catch {}
+        if (mode !== undefined) {
+            // read-only files must not be replaced, an in-place write would fail as well
+            await fs.access(targetPath, this.req('fs').constants.W_OK);
+        }
+        const tmpPath = pathModule.join(
+            pathModule.dirname(targetPath),
+            `.${pathModule.basename(targetPath)}.${Date.now()}${Math.random()
+                .toString(36)
+                .substr(2, 6)}.tmp`
+        );
+        let handle;
+        try {
+            handle = await fs.open(tmpPath, 'wx', mode);
+        } catch (e) {
+            logger.warn('Cannot create a temp file, writing in place', e);
+            return fs.writeFile(targetPath, data);
+        }
+        try {
+            try {
+                if (mode !== undefined) {
+                    await handle.chmod(mode);
+                }
+                await handle.writeFile(data);
+                await handle.sync();
+            } finally {
+                await handle.close();
+            }
+        } catch (e) {
+            await fs.unlink(tmpPath).catch(noop);
+            throw e;
+        }
+        try {
+            await fs.rename(tmpPath, targetPath);
+        } catch (e) {
+            await fs.unlink(tmpPath).catch(noop);
+            if (process.platform !== 'win32') {
+                throw e;
+            }
+            // windows can't replace a file opened by another app, e.g. a sync client
+            logger.warn('Cannot replace the file, writing in place', e);
+            await fs.writeFile(targetPath, data);
+        }
     },
     readFile(path, encoding, callback) {
         this.req('fs').readFile(path, encoding, (err, contents) => {

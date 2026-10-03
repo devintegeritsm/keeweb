@@ -62,7 +62,7 @@ class AppModel {
         AppModel.instance = this;
     }
 
-    loadConfig(configLocation) {
+    loadConfig(configLocation, { fromMeta } = {}) {
         return new Promise((resolve, reject) => {
             this.ensureCanLoadConfig(configLocation);
             this.appLogger.debug('Loading config from', configLocation);
@@ -102,7 +102,7 @@ class AppModel {
                 reject('Error loading app config');
             });
         }).then((config) => {
-            return this.applyUserConfig(config);
+            return this.applyUserConfig(config, { fromMeta });
         });
     }
 
@@ -118,7 +118,7 @@ class AppModel {
         }
     }
 
-    applyUserConfig(config) {
+    applyUserConfig(config, { fromMeta } = {}) {
         this.settings.set(config.settings);
         if (config.files) {
             if (config.showOnlyFilesFromConfig) {
@@ -147,8 +147,11 @@ class AppModel {
                 .forEach((fi) => this.fileInfos.unshift(fi));
         }
         if (config.plugins) {
+            // unsigned plugins are allowed only from the config set in index.html by the admin,
+            // a config passed in the url can come from anyone who can upload a file to this host
+            const skipSignatureValidation = !!fromMeta;
             const pluginsPromises = config.plugins.map((plugin) =>
-                PluginManager.installIfNew(plugin.url, plugin.manifest, true)
+                PluginManager.installIfNew(plugin.url, plugin.manifest, skipSignatureValidation)
             );
             return Promise.all(pluginsPromises).then(() => {
                 this.settings.set(config.settings);
@@ -975,6 +978,10 @@ class AppModel {
             this.fileInfos.save();
             if (callback) {
                 callback(err);
+            }
+            if (!err && file.hasEditsSinceSyncStart() && this.settings.autoSaveInterval === -1) {
+                // the file stays dirty, so there will be no dirty change event to trigger the sync
+                setTimeout(() => this.syncFile(file), 0);
             }
         };
         if (!storage) {
