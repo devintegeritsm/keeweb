@@ -10,7 +10,6 @@
         "canOpenDemo": false,
         "autoSave": true,
         "autoSaveInterval": -1,
-        "clipboardSeconds": 15,
         "idleMinutes": 5,
         "rememberKeyFiles": "",
         "checkPasswordsOnHIBP": false,

@@ -42,9 +42,11 @@ Settings in `config.json` are applied on every load, overriding changes made in 
 | `webdavSaveMethod` | `put` | upload with `If-Match`, so a save can't overwrite changes made on another device after KeeWeb checked the file; use `move` if your server writes uploads in place instead of to a temp file like Nextcloud and Apache mod_dav do |
 | `canOpenDemo` | `false` | no demo database |
 | `autoSaveInterval` | `-1` | save on every change, so other devices see it and nothing waits in the browser |
-| `clipboardSeconds` | `15` | clear copied passwords |
 | `idleMinutes` | `5` | lock after 5 minutes without activity |
 | `rememberKeyFiles` | `""` | don't keep key file data in the browser |
+
+Browsers don't let web pages clear the clipboard, so a copied password stays there until something
+else is copied, unlike in the desktop app, which clears it after 15 seconds by default.
 
 `config.json` is publicly readable, never put passwords or tokens there. To show your database
 on the open screen, add a `files` list next to `settings`, without credentials:
