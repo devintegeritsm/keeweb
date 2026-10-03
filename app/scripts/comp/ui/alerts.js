@@ -1,8 +1,12 @@
 import { Locale } from 'util/locale';
+import { Logger } from 'util/logger';
 import { ModalView } from 'views/modal-view';
+
+const logger = new Logger('alerts');
 
 const Alerts = {
     alertDisplayed: false,
+    views: new Set(),
 
     buttons: {
         ok: {
@@ -47,8 +51,9 @@ const Alerts = {
         if (config.skipIfAlertDisplayed && Alerts.alertDisplayed) {
             return null;
         }
-        Alerts.alertDisplayed = true;
         const view = new ModalView(config);
+        Alerts.views.add(view);
+        Alerts.alertDisplayed = true;
         view.render();
         view.once('result', (res, check) => {
             if (res && config.success) {
@@ -62,9 +67,29 @@ const Alerts = {
             }
         });
         view.on('will-close', () => {
-            Alerts.alertDisplayed = false;
+            Alerts.views.delete(view);
+            Alerts.alertDisplayed = Alerts.views.size > 0;
         });
         return view;
+    },
+
+    closeAll() {
+        // closing an alert calls its callbacks, which can show another one
+        for (let attempt = 0; attempt < 10 && Alerts.views.size; attempt++) {
+            for (const view of [...Alerts.views]) {
+                try {
+                    view.closeImmediate();
+                } catch (e) {
+                    logger.error('Error closing alert', e);
+                    Alerts.views.delete(view);
+                    if (!view.removed) {
+                        view.unbindEvents();
+                        view.remove();
+                    }
+                }
+            }
+        }
+        Alerts.alertDisplayed = Alerts.views.size > 0;
     },
 
     notImplemented() {

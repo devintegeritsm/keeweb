@@ -1170,6 +1170,54 @@ class AppModel {
         }
     }
 
+    keepUnsavedChangesInCache(callback) {
+        // keeps changes in the offline cache without saving files to their storage,
+        // next time such a file is opened from the cache with the changes and synced
+        const dirtyFiles = this.files.filter((file) => file.active && file.dirty);
+        Promise.all(
+            dirtyFiles.map(
+                (file) => new Promise((resolve) => this.keepFileChangesInCache(file, resolve))
+            )
+        ).then((errors) => callback(errors.find((err) => err)));
+    }
+
+    keepFileChangesInCache(file, callback) {
+        const logger = new Logger('sync', file.name);
+        if (file.syncing) {
+            return callback('Sync in progress');
+        }
+        if (!file.storage) {
+            // the cache is the only storage of such files
+            return this.syncFile(file, null, callback);
+        }
+        if (this.settings.disableOfflineStorage) {
+            return callback('Offline storage is disabled');
+        }
+        const fileInfo = this.getFileInfo(file);
+        if (!fileInfo) {
+            return callback('File info not found');
+        }
+        const editCounter = file.editCounter;
+        file.getData((data, err) => {
+            if (err) {
+                return callback(err);
+            }
+            Storage.cache.save(fileInfo.id, null, data, (err) => {
+                if (err) {
+                    logger.error('Error saving changes to cache', err);
+                    return callback(err);
+                }
+                logger.info('Kept changes in cache');
+                if (file.editCounter === editCounter) {
+                    file.dirty = false;
+                }
+                fileInfo.set({ modified: true, editState: file.getLocalEditState() });
+                this.fileInfos.save();
+                callback();
+            });
+        });
+    }
+
     deleteAllCachedFiles() {
         for (const fileInfo of this.fileInfos) {
             if (fileInfo.storage && !fileInfo.modified) {

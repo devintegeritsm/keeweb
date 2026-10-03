@@ -508,39 +508,78 @@ class AppView extends View {
     }
 
     lockWorkspace(autoInit) {
-        if (Alerts.alertDisplayed) {
+        if (!this.model.files.hasOpenFiles()) {
+            return;
+        }
+        if (!autoInit && Alerts.alertDisplayed) {
+            return;
+        }
+        // a field being edited saves its value on blur, so it's kept like other changes
+        document.activeElement?.blur();
+        if (autoInit) {
+            // a dialog left open must not keep the app unlocked
+            Alerts.closeAll();
+        }
+        const syncingFile = this.model.files.find((file) => file.syncing);
+        if (syncingFile) {
+            // saving fails during sync, try again when it's complete
+            syncingFile.once('change:syncing', () =>
+                setTimeout(() => this.lockWorkspace(autoInit), 0)
+            );
             return;
         }
         if (this.model.files.hasUnsavedFiles()) {
             if (this.model.settings.autoSave) {
-                this.saveAndLock();
+                this.saveAndLock(null, { autoLock: autoInit });
+            } else if (autoInit) {
+                this.keepChangesAndLock();
             } else {
-                const message = autoInit ? Locale.appCannotLockAutoInit : Locale.appCannotLock;
-                Alerts.alert({
-                    icon: 'lock',
-                    header: 'Lock',
-                    body: message,
-                    buttons: [
-                        { result: 'save', title: Locale.saveChanges },
-                        { result: 'discard', title: Locale.discardChanges, error: true },
-                        { result: '', title: Locale.alertCancel }
-                    ],
-                    checkbox: Locale.appAutoSave,
-                    success: (result, autoSaveChecked) => {
-                        if (result === 'save') {
-                            if (autoSaveChecked) {
-                                this.model.settings.autoSave = autoSaveChecked;
-                            }
-                            this.saveAndLock();
-                        } else if (result === 'discard') {
-                            this.model.closeAllFiles();
-                        }
-                    }
-                });
+                this.showCannotLockAlert(autoInit);
             }
         } else {
             this.closeAllFilesAndShowFirst();
         }
+    }
+
+    keepChangesAndLock(onError) {
+        // without autosave the changes stay in the offline cache until the file is opened again
+        this.model.keepUnsavedChangesInCache((err) => {
+            if (err) {
+                new Logger('lock').error('Cannot keep changes in cache', err);
+                if (onError) {
+                    onError();
+                } else {
+                    this.showCannotLockAlert(true);
+                }
+            } else if (!this.model.files.hasDirtyFiles()) {
+                this.closeAllFilesAndShowFirst();
+            }
+        });
+    }
+
+    showCannotLockAlert(autoInit) {
+        const message = autoInit ? Locale.appCannotLockAutoInit : Locale.appCannotLock;
+        Alerts.alert({
+            icon: 'lock',
+            header: 'Lock',
+            body: message,
+            buttons: [
+                { result: 'save', title: Locale.saveChanges },
+                { result: 'discard', title: Locale.discardChanges, error: true },
+                { result: '', title: Locale.alertCancel }
+            ],
+            checkbox: Locale.appAutoSave,
+            success: (result, autoSaveChecked) => {
+                if (result === 'save') {
+                    if (autoSaveChecked) {
+                        this.model.settings.autoSave = autoSaveChecked;
+                    }
+                    this.saveAndLock();
+                } else if (result === 'discard') {
+                    this.model.closeAllFiles();
+                }
+            }
+        });
     }
 
     saveAndLock(complete, options) {
@@ -555,6 +594,9 @@ class AppView extends View {
         }, this);
         if (!pendingCallbacks) {
             this.closeAllFilesAndShowFirst();
+            if (complete) {
+                complete(true);
+            }
         }
         function fileSaved(file, err) {
             if (err) {
@@ -562,42 +604,11 @@ class AppView extends View {
             }
             if (--pendingCallbacks === 0) {
                 if (errorFiles.length && this.model.files.hasDirtyFiles()) {
-                    if (!Alerts.alertDisplayed) {
-                        const buttons = [Alerts.buttons.ok];
-                        const errorStr =
-                            errorFiles.length > 1
-                                ? Locale.appSaveErrorBodyMul
-                                : Locale.appSaveErrorBody;
-                        let body = errorStr + ' ' + errorFiles.join(', ') + '.';
-                        if (options?.appClosing) {
-                            buttons.unshift({
-                                result: 'ignore',
-                                title: Locale.appSaveErrorExitLoseChanges,
-                                error: true
-                            });
-                            body += '\n' + Locale.appSaveErrorExitLoseChangesBody;
-                        }
-                        Alerts.error({
-                            header: Locale.appSaveError,
-                            body,
-                            buttons,
-                            complete: (res) => {
-                                if (res === 'ignore') {
-                                    this.model.closeAllFiles();
-                                    if (complete) {
-                                        complete(true);
-                                    }
-                                } else {
-                                    if (complete) {
-                                        complete(false);
-                                    }
-                                }
-                            }
-                        });
+                    if (options?.autoLock) {
+                        // the app must be locked anyway, keep what couldn't be saved in the cache
+                        this.keepChangesAndLock(() => showSaveError.call(this));
                     } else {
-                        if (complete) {
-                            complete(false);
-                        }
+                        showSaveError.call(this);
                     }
                 } else {
                     this.closeAllFilesAndShowFirst();
@@ -606,6 +617,43 @@ class AppView extends View {
                     }
                 }
             }
+        }
+        function showSaveError() {
+            if (Alerts.alertDisplayed) {
+                if (complete) {
+                    complete(false);
+                }
+                return;
+            }
+            const buttons = [Alerts.buttons.ok];
+            const errorStr =
+                errorFiles.length > 1 ? Locale.appSaveErrorBodyMul : Locale.appSaveErrorBody;
+            let body = errorStr + ' ' + errorFiles.join(', ') + '.';
+            if (options?.appClosing) {
+                buttons.unshift({
+                    result: 'ignore',
+                    title: Locale.appSaveErrorExitLoseChanges,
+                    error: true
+                });
+                body += '\n' + Locale.appSaveErrorExitLoseChangesBody;
+            }
+            Alerts.error({
+                header: Locale.appSaveError,
+                body,
+                buttons,
+                complete: (res) => {
+                    if (res === 'ignore') {
+                        this.model.closeAllFiles();
+                        if (complete) {
+                            complete(true);
+                        }
+                    } else {
+                        if (complete) {
+                            complete(false);
+                        }
+                    }
+                }
+            });
         }
     }
 
