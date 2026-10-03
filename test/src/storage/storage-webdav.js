@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import { StorageWebDav } from 'storage/impl/storage-webdav';
+import { Timeouts } from 'const/timeouts';
 
 const FilePath = 'https://dav.example.com/dir/file.kdbx';
 
@@ -10,6 +11,8 @@ class FakeWebDavServer {
     exposeEtag = true;
     weakEtags = false;
     blockIfMatchByCors = false;
+    unreachable = false;
+    hang = false;
     onRequest = null;
     version = 0;
 
@@ -29,6 +32,9 @@ class FakeWebDavServer {
         const path = req.url;
         const file = this.files[path];
         const ifMatch = req.headers['If-Match'];
+        if (this.unreachable) {
+            return { error: true };
+        }
         if (ifMatch && this.blockIfMatchByCors) {
             return { error: true };
         }
@@ -109,6 +115,12 @@ function createFakeXhrClass(server) {
         }
 
         send(body) {
+            if (server.hang) {
+                if (this.timeout) {
+                    setTimeout(() => this.listeners.timeout(), this.timeout);
+                }
+                return;
+            }
             setTimeout(async () => {
                 this.body = body instanceof Blob ? await body.text() : body;
                 const res = server.handle(this);
@@ -158,6 +170,36 @@ describe('StorageWebDav', () => {
     function puts() {
         return server.requests.filter((r) => r.method === 'PUT');
     }
+
+    it('reports an unreachable server', async () => {
+        server.unreachable = true;
+        const statErr = await stat().catch((e) => e);
+        expect(statErr).to.eql('network error');
+        expect(storage.isUnreachableError(statErr)).to.be.true;
+        const { err: saveErr } = await save('v2');
+        expect(storage.isUnreachableError(saveErr)).to.be.true;
+    });
+
+    it('stops waiting for a stat response after a timeout', async () => {
+        const statTimeout = Timeouts.StorageStat;
+        Timeouts.StorageStat = 50;
+        server.hang = true;
+        try {
+            const err = await stat().catch((e) => e);
+            expect(err).to.eql('timeout');
+            expect(storage.isUnreachableError(err)).to.be.true;
+        } finally {
+            Timeouts.StorageStat = statTimeout;
+        }
+    });
+
+    it('does not treat server errors as an unreachable server', () => {
+        expect(storage.isUnreachableError({ notFound: true })).to.be.false;
+        expect(storage.isUnreachableError({ revConflict: true })).to.be.false;
+        expect(storage.isUnreachableError('HTTP status 500')).to.be.false;
+        expect(storage.isUnreachableError('HTTP status 401')).to.be.false;
+        expect(storage.isUnreachableError(null)).to.be.false;
+    });
 
     it('returns the etag in stat', async () => {
         const { rev, etag } = await stat();

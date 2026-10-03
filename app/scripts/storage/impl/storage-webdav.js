@@ -1,6 +1,7 @@
 import * as kdbxweb from 'kdbxweb';
 import { StorageBase } from 'storage/storage-base';
 import { Locale } from 'util/locale';
+import { Timeouts } from 'const/timeouts';
 
 // ':' is not a base64 character, so this can't be confused with a plain btoa result
 const Utf8Base64Prefix = 'utf8:';
@@ -71,6 +72,11 @@ class StorageWebDav extends StorageBase {
         this.appSettings[key] = value;
     }
 
+    isUnreachableError(err) {
+        // no network, or the server is in a network that isn't connected yet, like a VPN
+        return err === 'network error' || err === 'timeout';
+    }
+
     load(path, opts, callback) {
         this._request(
             {
@@ -128,7 +134,8 @@ class StorageWebDav extends StorageBase {
                     method: 'HEAD',
                     path,
                     user: opts ? opts.user : null,
-                    password: opts ? opts.password : null
+                    password: opts ? opts.password : null,
+                    timeout: Timeouts.StorageStat
                 },
                 callback
                     ? (err, xhr, stat) => {
@@ -427,6 +434,13 @@ class StorageWebDav extends StorageBase {
                 callback = null;
             }
         });
+        xhr.addEventListener('timeout', () => {
+            this.logger.debug(config.op + ' error', config.path, 'timeout', this.logger.ts(ts));
+            if (callback) {
+                callback('timeout', xhr);
+                callback = null;
+            }
+        });
         xhr.addEventListener('abort', () => {
             this.logger.debug(config.op + ' error', config.path, 'aborted', this.logger.ts(ts));
             if (callback) {
@@ -436,6 +450,9 @@ class StorageWebDav extends StorageBase {
         });
         xhr.open(config.method, config.path);
         xhr.responseType = 'arraybuffer';
+        if (config.timeout) {
+            xhr.timeout = config.timeout;
+        }
         if (config.user) {
             xhr.setRequestHeader(
                 'Authorization',

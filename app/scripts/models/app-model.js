@@ -4,6 +4,7 @@ import { SearchResultCollection } from 'collections/search-result-collection';
 import { FileCollection } from 'collections/file-collection';
 import { FileInfoCollection } from 'collections/file-info-collection';
 import { RuntimeInfo } from 'const/runtime-info';
+import { UnreachableStoragePrompt } from 'comp/app/unreachable-storage-prompt';
 import { UsbListener } from 'comp/app/usb-listener';
 import { NativeModules } from 'comp/launcher/native-modules';
 import { Timeouts } from 'const/timeouts';
@@ -42,6 +43,9 @@ class AppModel {
     fileUnlockPromise = null;
     hardwareDecryptInProgress = false;
     mainWindowBlurTimer = null;
+    // files kept on this device because their storage couldn't be reached,
+    // automatic saves don't ask about them again until a sync is successful
+    localOnlyFileIds = new Set();
 
     constructor() {
         Events.on('refresh', this.refresh.bind(this));
@@ -542,17 +546,22 @@ class AppModel {
 
         if (fileInfo && fileInfo.modified) {
             logger.info('Open file from cache because it is modified');
-            this.openFileFromCache(
-                params,
-                (err, file) => {
-                    if (!err && file) {
-                        logger.info('Sync just opened modified file');
-                        setTimeout(() => this.syncFile(file), 0);
-                    }
-                    callback(err);
-                },
-                fileInfo
-            );
+            this.checkStorageBeforeOpen(params, fileInfo, logger, (err) => {
+                if (err) {
+                    return callback(err);
+                }
+                this.openFileFromCache(
+                    params,
+                    (err, file) => {
+                        if (!err && file) {
+                            logger.info('Sync just opened modified file');
+                            setTimeout(() => this.syncFile(file), 0);
+                        }
+                        callback(err);
+                    },
+                    fileInfo
+                );
+            });
         } else if (params.fileData) {
             logger.info('Open file from supplied content');
             if (params.storage === 'file') {
@@ -602,6 +611,10 @@ class AppModel {
             this.settings.disableOfflineStorage
         ) {
             this.openFileFromStorage(params, callback, fileInfo, logger);
+        } else if (this.canAskIfUnreachable(params.storage)) {
+            // the storage is checked before the local copy is used, so that the user can connect to it
+            logger.info('Open file from storage, or from cache if it is latest');
+            this.openFileFromStorage(params, callback, fileInfo, logger);
         } else {
             logger.info('Open file from cache, will sync after load', params.storage);
             this.openFileFromCache(
@@ -644,10 +657,35 @@ class AppModel {
     openFileFromStorage(params, callback, fileInfo, logger, noCache) {
         logger.info('Open file from storage', params.storage);
         const storage = Storage[params.storage];
+        const askIfUnreachable = (err) => {
+            // the user can connect to the storage and try again, or use the local copy
+            const hasLocalCopy =
+                !noCache &&
+                fileInfo &&
+                fileInfo.openDate &&
+                storage.name !== 'file' &&
+                !this.settings.disableOfflineStorage;
+            if (!hasLocalCopy || !this.isUnreachableError(params.storage, err)) {
+                return false;
+            }
+            this.askToRetryOpen(params, fileInfo, err, logger).then((answer) => {
+                if (answer === 'retry') {
+                    this.openFileFromStorage(params, callback, fileInfo, logger, noCache);
+                } else if (answer === 'local') {
+                    this.openFileFromCache(params, callback, fileInfo);
+                } else {
+                    callback(this.openCanceledError());
+                }
+            });
+            return true;
+        };
         const storageLoad = () => {
             logger.info('Load from storage');
             storage.load(params.path, params.opts, (err, data, stat) => {
                 if (err) {
+                    if (askIfUnreachable(err)) {
+                        return;
+                    }
                     if (fileInfo && fileInfo.openDate && !this.settings.disableOfflineStorage) {
                         logger.info('Open file from cache because of storage load error', err);
                         this.openFileFromCache(params, callback, fileInfo);
@@ -668,6 +706,9 @@ class AppModel {
         if (cacheRev && storage.stat) {
             logger.info('Stat file');
             storage.stat(params.path, params.opts, (err, stat) => {
+                if (err && askIfUnreachable(err)) {
+                    return;
+                }
                 if (
                     !noCache &&
                     fileInfo &&
@@ -693,6 +734,58 @@ class AppModel {
         } else {
             storageLoad();
         }
+    }
+
+    canAskIfUnreachable(storage) {
+        return !!Storage[storage]?.isUnreachableError;
+    }
+
+    isUnreachableError(storage, err) {
+        return !!err && !!Storage[storage]?.isUnreachableError?.(err);
+    }
+
+    checkStorageBeforeOpen(params, fileInfo, logger, callback) {
+        // the local copy is synced after opening, if the storage can't be reached,
+        // the user can connect to it first and try again
+        const storage = Storage[params.storage];
+        if (!this.canAskIfUnreachable(params.storage) || !storage.stat) {
+            return callback();
+        }
+        logger.info('Check storage before opening the local copy');
+        storage.stat(params.path, params.opts, (err) => {
+            if (!this.isUnreachableError(params.storage, err)) {
+                return callback();
+            }
+            this.askToRetryOpen(params, fileInfo, err, logger).then((answer) => {
+                if (answer === 'retry') {
+                    this.checkStorageBeforeOpen(params, fileInfo, logger, callback);
+                } else {
+                    callback(answer === 'local' ? null : this.openCanceledError());
+                }
+            });
+        });
+    }
+
+    askToRetryOpen(params, fileInfo, err, logger) {
+        logger.info('Storage is unreachable, asking to try again', err);
+        return UnreachableStoragePrompt.askToRetryOpen(params.name).then((answer) => {
+            if (answer === 'retry') {
+                logger.info('Try again');
+            } else if (answer === 'local') {
+                logger.info('Use the local copy');
+                this.localOnlyFileIds.add(fileInfo.id);
+            } else {
+                // closed without an answer, e.g. by auto-lock, the file must not be opened
+                logger.info('Open canceled');
+            }
+            return answer;
+        });
+    }
+
+    openCanceledError() {
+        const err = new Error('Open canceled');
+        err.userCanceled = true;
+        return err;
     }
 
     openFileWithData(params, callback, fileInfo, data, updateCacheOnSuccess) {
@@ -890,6 +983,7 @@ class AppModel {
         if (file.storage === 'file') {
             Storage.file.unwatch(file.path);
         }
+        this.localOnlyFileIds.delete(file.id);
     }
 
     removeFileInfo(id) {
@@ -950,6 +1044,8 @@ class AppModel {
             });
         }
         file.setSyncProgress();
+        // changes saved to the cache in this sync, but not to the storage
+        let changesInCache = false;
         const complete = (err) => {
             if (!file.active) {
                 return callback && callback('File is closed');
@@ -961,8 +1057,11 @@ class AppModel {
                 storage,
                 path,
                 opts: this.getStoreOpts(file),
-                modified: file.dirty ? fileInfo.modified : file.modified,
-                editState: file.dirty ? fileInfo.editState : file.getLocalEditState(),
+                // with edits made during sync the file stays dirty,
+                // but the cache can already have earlier changes that must be synced later
+                modified: file.dirty ? fileInfo.modified || changesInCache : file.modified,
+                editState:
+                    file.dirty && !changesInCache ? fileInfo.editState : file.getLocalEditState(),
                 syncDate: file.syncDate,
                 chalResp: file.chalResp
             });
@@ -976,6 +1075,42 @@ class AppModel {
                 this.fileInfos.unshift(fileInfo);
             }
             this.fileInfos.save();
+            if (err && file.dirty && storage && this.settings.autoSaveInterval === -1) {
+                // edits made during a failed sync are kept on this device like the others
+                setTimeout(() => this.keepFileChangesInCache(file, noop), 0);
+            }
+            if (this.isUnreachableError(storage, err)) {
+                // automatic saves don't ask again after the user decided to save later,
+                // and don't interrupt typing
+                const startedByUser = options.startedByUser || options.askToRetry;
+                const askToRetry =
+                    options.askToRetry ??
+                    (startedByUser ||
+                        (!this.localOnlyFileIds.has(file.id) &&
+                            !UnreachableStoragePrompt.isUserEditing()));
+                if (askToRetry) {
+                    logger.info('Storage is unreachable, asking to try again');
+                    UnreachableStoragePrompt.askToRetrySave(file.name, {
+                        skipIfAlertDisplayed: !startedByUser
+                    }).then((answer) => {
+                        if (answer === 'retry' && file.active) {
+                            logger.info('Try again');
+                            this.syncFile(file, options, callback);
+                            return;
+                        }
+                        if (answer === 'local') {
+                            logger.info('Keep changes on this device, save later');
+                            this.localOnlyFileIds.add(file.id);
+                        }
+                        if (callback) {
+                            callback(err);
+                        }
+                    });
+                    return;
+                }
+            } else if (!err) {
+                this.localOnlyFileIds.delete(file.id);
+            }
             if (callback) {
                 callback(err);
             }
@@ -1072,6 +1207,7 @@ class AppModel {
                             logger.info('Error saving data to storage');
                             complete(err);
                         } else {
+                            changesInCache = false;
                             if (stat && stat.rev) {
                                 logger.info('Update rev in file info');
                                 fileInfo.rev = stat.rev;
@@ -1113,6 +1249,7 @@ class AppModel {
                                 return complete(err);
                             }
                             file.dirty = false;
+                            changesInCache = true;
                             logger.info('Saved to cache, saving to storage');
                             saveToStorage(data);
                         });
@@ -1145,6 +1282,7 @@ class AppModel {
                                 }
                                 if (!e) {
                                     file.dirty = false;
+                                    changesInCache = true;
                                 }
                                 logger.info('Saved to cache, exit with error', err || 'no error');
                                 complete(err);

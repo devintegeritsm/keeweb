@@ -76,7 +76,7 @@ class AppView extends View {
         this.listenTo(Events, 'lock-workspace', this.lockWorkspace);
         this.listenTo(Events, 'show-file', this.showFileSettings);
         this.listenTo(Events, 'open-file', this.toggleOpenFile);
-        this.listenTo(Events, 'save-all', this.saveAll);
+        this.listenTo(Events, 'save-all', () => this.saveAll({ startedByUser: true }));
         this.listenTo(Events, 'remote-key-changed', this.remoteKeyChanged);
         this.listenTo(Events, 'key-change-pending', this.keyChangePending);
         this.listenTo(Events, 'toggle-settings', this.toggleSettings);
@@ -589,7 +589,9 @@ class AppView extends View {
             if (!file.dirty) {
                 return;
             }
-            this.model.syncFile(file, null, fileSaved.bind(this, file));
+            // auto-lock can't wait for an answer if the storage can't be reached
+            const syncOptions = options?.autoLock ? { askToRetry: false } : null;
+            this.model.syncFile(file, syncOptions, fileSaved.bind(this, file));
             pendingCallbacks++;
         }, this);
         if (!pendingCallbacks) {
@@ -687,9 +689,9 @@ class AppView extends View {
         }
     }
 
-    saveAll() {
+    saveAll(options) {
         this.model.files.forEach(function (file) {
-            this.model.syncFile(file);
+            this.model.syncFile(file, options);
         }, this);
     }
 
@@ -699,7 +701,7 @@ class AppView extends View {
         }
         if (this.model.settings.autoSaveInterval > 0) {
             this.autoSaveTimer = setInterval(
-                this.saveAll.bind(this),
+                () => this.saveAll(),
                 this.model.settings.autoSaveInterval * 1000 * 60
             );
         }

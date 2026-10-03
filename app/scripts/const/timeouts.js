@@ -13,6 +13,8 @@ const Timeouts = {
     AutoUpdatePluginsAfterStart: 500,
     LinkDownloadRevoke: 10 * 1000 * 60,
     DefaultHttpRequest: 60000,
+    // a HEAD request is quick, waiting longer usually means the server can't be reached
+    StorageStat: 15000,
     ExternalDeviceReconnect: 3000,
     ExternalDeviceAfterReconnect: 1000,
     FieldLabelDoubleClick: 300,
