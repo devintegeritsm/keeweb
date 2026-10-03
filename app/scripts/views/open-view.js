@@ -27,6 +27,11 @@ import template from 'templates/open.hbs';
 
 const logger = new Logger('open-view');
 
+function getFilePath(file) {
+    // only files picked or dropped in the desktop app have a path
+    return Launcher ? Launcher.getPathForFile(file) : undefined;
+}
+
 class OpenView extends View {
     parent = '.app__body';
     modal = 'open';
@@ -220,7 +225,7 @@ class OpenView extends View {
                 this.setFile(file, null, this.showLocalFileAlert.bind(this));
             } else {
                 this.processFile(file, (success) => {
-                    if (success && !file.path && this.reading === 'fileData') {
+                    if (success && !getFilePath(file) && this.reading === 'fileData') {
                         this.showLocalFileAlert();
                     }
                 });
@@ -240,8 +245,8 @@ class OpenView extends View {
                             this.params.id = null;
                             this.params.fileData = e.target.result;
                             this.params.name = file.name.replace(/(.+)\.\w+$/i, '$1');
-                            this.params.path = file.path || null;
-                            this.params.storage = file.path ? 'file' : null;
+                            this.params.path = getFilePath(file) || null;
+                            this.params.storage = this.params.path ? 'file' : null;
                             this.params.rev = null;
                             if (!this.params.keyFileData) {
                                 this.params.keyFileName = null;
@@ -283,7 +288,7 @@ class OpenView extends View {
                     this.params.keyFileData = e.target.result;
                     this.params.keyFileName = file.name;
                     if (this.model.settings.rememberKeyFiles === 'path') {
-                        this.params.keyFilePath = file.path;
+                        this.params.keyFilePath = getFilePath(file);
                     }
                     this.displayOpenKeyFile();
                     success = true;
@@ -564,7 +569,7 @@ class OpenView extends View {
             this.setFile(
                 dataFile,
                 keyFile,
-                dataFile.path ? null : this.showLocalFileAlert.bind(this)
+                getFilePath(dataFile) ? null : this.showLocalFileAlert.bind(this)
             );
             return;
         }

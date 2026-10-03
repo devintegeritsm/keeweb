@@ -2,25 +2,20 @@ import { Events } from 'framework/events';
 import { Launcher } from 'comp/launcher';
 import { AppSettingsModel } from 'models/app-settings-model';
 
+Events.on('main-window-will-close', () => {
+    if (CopyPaste.simpleCopy) {
+        Launcher.clearClipboardText();
+    }
+});
+
 const CopyPaste = {
     simpleCopy: !!(Launcher && Launcher.clipboardSupported),
 
     copy(text) {
         if (this.simpleCopy) {
-            Launcher.setClipboardText(text);
             const clipboardSeconds = AppSettingsModel.clipboardSeconds;
-            if (clipboardSeconds > 0) {
-                const clearClipboard = () => {
-                    if (Launcher.getClipboardText() === text) {
-                        Launcher.clearClipboardText();
-                    }
-                };
-                Events.on('main-window-will-close', clearClipboard);
-                setTimeout(() => {
-                    clearClipboard();
-                    Events.off('main-window-will-close', clearClipboard);
-                }, clipboardSeconds * 1000);
-            }
+            // the clipboard is cleared by the main process, if the copied text is still there
+            Launcher.setClipboardText(text, clipboardSeconds);
             return { success: true, seconds: clipboardSeconds };
         } else {
             try {

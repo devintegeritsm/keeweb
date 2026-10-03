@@ -1,3 +1,4 @@
+import * as kdbxweb from 'kdbxweb';
 import { Events } from 'framework/events';
 import { Links } from 'const/links';
 import { AppSettingsModel } from 'models/app-settings-model';
@@ -140,28 +141,28 @@ class StorageBase {
     }
 
     _httpRequestLauncher(config, onLoad) {
-        Launcher.remoteApp().httpRequest(
-            config,
-            (level, ...args) => this.logger[level](...args),
+        const method = config.method || 'GET';
+        Launcher.httpRequest(config).then(
             ({ status, response, headers }) => {
-                response = Buffer.from(response, 'hex');
+                this.logger.info('HTTP response', method, config.url, status);
                 if (config.responseType === 'json') {
                     try {
-                        response = JSON.parse(response.toString('utf8'));
+                        response = JSON.parse(kdbxweb.ByteUtils.bytesToString(response));
                     } catch (e) {
                         return config.error && config.error('json parse error');
                     }
                 } else {
-                    response = response.buffer.slice(
-                        response.byteOffset,
-                        response.byteOffset + response.length
-                    );
+                    response = kdbxweb.ByteUtils.arrayToBuffer(response);
                 }
                 onLoad({
                     status,
                     response,
                     getResponseHeader: (name) => headers[name.toLowerCase()]
                 });
+            },
+            (err) => {
+                this.logger.error('HTTP error', method, config.url, err);
+                return config.error && config.error(err, {});
             }
         );
     }

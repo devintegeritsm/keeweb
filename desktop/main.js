@@ -19,6 +19,19 @@ perfTimestamps?.push({ name: 'loading app requires', ts: process.hrtime() });
 const main = electron.app;
 const logger = new Logger('remote-app');
 
+// these switches let other programs inspect the app with an open database,
+// node.js options such as --inspect are disabled with fuses in the build
+const DebuggingSwitches = [
+    'remote-debugging-port',
+    'remote-debugging-pipe',
+    'js-flags',
+    'wait-for-debugger-children'
+];
+if (!isDev && DebuggingSwitches.some((name) => main.commandLine.hasSwitch(name))) {
+    main.exit(1);
+    return;
+}
+
 let mainWindow = null;
 let appIcon = null;
 let ready = false;
@@ -57,11 +70,7 @@ const showDevToolsOnStart =
     process.argv.some((arg) => arg.startsWith('--devtools')) ||
     process.env.KEEWEB_OPEN_DEVTOOLS === '1';
 
-const loginItemSettings = process.platform === 'darwin' ? main.getLoginItemSettings() : {};
-
-const startMinimized =
-    loginItemSettings.wasOpenedAsHidden ||
-    process.argv.some((arg) => arg.startsWith('--minimized'));
+const startMinimized = process.argv.some((arg) => arg.startsWith('--minimized'));
 
 const themeBgColors = {
     dark: '#1e1e1e',
@@ -296,10 +305,10 @@ function createMainWindow() {
         backgroundColor: bgColor,
         webPreferences: {
             contextIsolation: false,
+            sandbox: false,
             backgroundThrottling: false,
             nodeIntegration: true,
             nodeIntegrationInWorker: true,
-            enableRemoteModule: true,
             spellcheck: false,
             v8CacheOptions: 'none'
         }
@@ -332,7 +341,6 @@ function createMainWindow() {
     mainWindow.on('move', delaySaveMainWindowPosition);
     mainWindow.on('restore', coerceMainWindowPositionToConnectedDisplay);
     mainWindow.on('close', mainWindowClosing);
-    mainWindow.on('closed', mainWindowClosed);
     mainWindow.on('focus', mainWindowFocus);
     mainWindow.on('blur', mainWindowBlur);
     mainWindow.on('closed', () => {
@@ -488,13 +496,9 @@ function mainWindowClosing() {
     updateMainWindowPositionIfPending();
 }
 
-function mainWindowClosed() {
-    main.removeAllListeners('remote-app-event');
-}
-
 function emitRemoteEvent(e, arg) {
     if (mainWindow && mainWindow.webContents) {
-        main.emit('remote-app-event', {
+        mainWindow.webContents.send('remote-app-event', {
             name: e,
             data: arg
         });
@@ -519,7 +523,7 @@ function setMenu() {
                     },
                     {
                         accelerator: 'Command+Shift+H',
-                        role: 'hideothers',
+                        role: 'hideOthers',
                         label: locale.sysMenuHideOthers
                     },
                     { role: 'unhide', label: locale.sysMenuUnhide },
@@ -542,7 +546,7 @@ function setMenu() {
                     { accelerator: 'CmdOrCtrl+V', role: 'paste', label: locale.sysMenuPaste },
                     {
                         accelerator: 'CmdOrCtrl+A',
-                        role: 'selectall',
+                        role: 'selectAll',
                         label: locale.sysMenuSelectAll
                     }
                 ]
@@ -577,9 +581,9 @@ function onContextMenu(e, props) {
         { role: 'copy' },
         { role: 'paste' },
         { type: 'separator' },
-        { role: 'selectall' }
+        { role: 'selectAll' }
     ]);
-    inputMenu.popup(mainWindow);
+    inputMenu.popup({ window: mainWindow });
 }
 
 function notifyOpenFile() {
@@ -718,8 +722,6 @@ function setEnv() {
         main.commandLine.appendSwitch('force-color-profile', 'srgb');
     }
 
-    main.allowRendererProcessReuse = true;
-
     logProgress('setting env');
 }
 
@@ -822,7 +824,7 @@ function getAppMainRoot() {
     if (isDev) {
         return __dirname;
     } else {
-        return process.mainModule.path;
+        return require.main.path;
     }
 }
 
@@ -994,59 +996,55 @@ function migrateOldConfigs(key) {
     return Promise.all(promises);
 }
 
-function httpRequest(config, log, onLoad) {
-    // eslint-disable-next-line node/no-deprecated-api
-    const opts = url.parse(config.url);
-
-    opts.method = config.method || 'GET';
-    opts.headers = {
-        'User-Agent': mainWindow.webContents.userAgent,
-        ...config.headers
-    };
-    opts.timeout = 60000;
-
-    let data;
-    if (config.data) {
-        if (config.dataIsMultipart) {
-            data = Buffer.concat(config.data.map((chunk) => Buffer.from(chunk)));
-        } else {
-            data = Buffer.from(config.data);
+function httpRequest(config) {
+    return new Promise((resolve, reject) => {
+        let data;
+        if (config.data) {
+            if (config.dataIsMultipart) {
+                data = Buffer.concat(config.data.map((chunk) => Buffer.from(chunk)));
+            } else {
+                data = Buffer.from(config.data);
+            }
         }
-        // Electron's API doesn't like that, while node.js needs it
-        // opts.headers['Content-Length'] = data.byteLength;
-    }
 
-    const req = electron.net.request(opts);
+        const req = electron.net.request({
+            method: config.method || 'GET',
+            url: config.url,
+            headers: {
+                'User-Agent': mainWindow.webContents.userAgent,
+                ...config.headers
+            }
+        });
 
-    req.on('response', (res) => {
-        const chunks = [];
-        const onClose = () => {
-            log('info', 'HTTP response', opts.method, config.url, res.statusCode, res.headers);
-            onLoad({
-                status: res.statusCode,
-                response: Buffer.concat(chunks).toString('hex'),
-                headers: res.headers
+        const timeout = setTimeout(() => {
+            req.abort();
+            reject('timeout');
+        }, 60000);
+
+        req.on('response', (res) => {
+            const chunks = [];
+            res.on('data', (chunk) => {
+                chunks.push(chunk);
             });
-        };
-        res.on('data', (chunk) => {
-            chunks.push(chunk);
+            res.on('end', () => {
+                clearTimeout(timeout);
+                resolve({
+                    status: res.statusCode,
+                    response: Buffer.concat(chunks),
+                    headers: res.headers
+                });
+            });
         });
-        res.on('end', () => {
-            onClose();
+        req.on('error', (e) => {
+            clearTimeout(timeout);
+            logger.error('HTTP error', config.method || 'GET', config.url, e);
+            reject('network error');
         });
+        if (data) {
+            req.write(data);
+        }
+        req.end();
     });
-    req.on('error', (e) => {
-        log('error', 'HTTP error', opts.method, config.url, e);
-        return config.error && config.error('network error', {});
-    });
-    req.on('timeout', () => {
-        req.abort();
-        return config.error && config.error('timeout', {});
-    });
-    if (data) {
-        req.write(data);
-    }
-    req.end();
 }
 
 function setupIpcHandlers() {

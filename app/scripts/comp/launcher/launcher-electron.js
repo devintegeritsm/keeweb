@@ -23,11 +23,14 @@ const Launcher = {
     electron() {
         return this.req('electron');
     },
-    remoteApp() {
-        return this.electron().remote.app;
+    ipcRenderer() {
+        return this.electron().ipcRenderer;
     },
-    remReq(mod) {
-        return this.electron().remote.require(mod);
+    info() {
+        if (!this._info) {
+            this._info = this.ipcRenderer().sendSync('launcherGetInfo');
+        }
+        return this._info;
     },
     openLink(href) {
         if (/^(http|https|ftp|sftp|mailto):/i.test(href)) {
@@ -36,29 +39,25 @@ const Launcher = {
     },
     devTools: true,
     openDevTools() {
-        this.electron().remote.getCurrentWindow().webContents.openDevTools({ mode: 'bottom' });
+        this.ipcRenderer().invoke('launcherOpenDevTools');
     },
-    getSaveFileName(defaultPath, callback) {
-        if (defaultPath) {
-            const homePath = this.remReq('electron').app.getPath('userDesktop');
-            defaultPath = this.joinPath(homePath, defaultPath);
-        }
-        this.remReq('electron')
-            .dialog.showSaveDialog({
+    getSaveFileName(defaultFileName, callback) {
+        this.ipcRenderer()
+            .invoke('launcherShowSaveDialog', {
                 title: Locale.launcherSave,
-                defaultPath,
-                filters: [{ name: Locale.launcherFileFilter, extensions: ['kdbx'] }]
+                defaultFileName,
+                filterName: Locale.launcherFileFilter
             })
-            .then((res) => callback(res.filePath));
+            .then((filePath) => callback(filePath));
+    },
+    getPathForFile(file) {
+        return this.electron().webUtils.getPathForFile(file) || undefined;
     },
     getUserDataPath(fileName) {
-        if (!this.userDataPath) {
-            this.userDataPath = this.remoteApp().getPath('userData');
-        }
-        return this.joinPath(this.userDataPath, fileName || '');
+        return this.joinPath(this.info().userDataPath, fileName || '');
     },
     getTempPath(fileName) {
-        let tempPath = this.joinPath(this.remoteApp().getPath('temp'), 'KeeWeb');
+        let tempPath = this.joinPath(this.info().tempPath, 'KeeWeb');
         const fs = this.req('fs');
         if (!fs.existsSync(tempPath)) {
             fs.mkdirSync(tempPath);
@@ -69,12 +68,10 @@ const Launcher = {
         return tempPath;
     },
     getDocumentsPath(fileName) {
-        return this.joinPath(this.remoteApp().getPath('documents'), fileName || '');
+        return this.joinPath(this.info().documentsPath, fileName || '');
     },
     getAppPath(fileName) {
-        const dirname = this.req('path').dirname;
-        const appPath = __dirname.endsWith('app.asar') ? __dirname : this.remoteApp().getAppPath();
-        return this.joinPath(dirname(appPath), fileName || '');
+        return this.joinPath(this.info().appPath, fileName || '');
     },
     getWorkDirPath(fileName) {
         return this.joinPath(process.cwd(), fileName || '');
@@ -202,10 +199,10 @@ const Launcher = {
         return this.req('fs').watch(path, { persistent: false });
     },
     loadConfig(name) {
-        return this.remoteApp().loadConfig(name);
+        return this.ipcRenderer().invoke('launcherLoadConfig', name);
     },
     saveConfig(name, data) {
-        return this.remoteApp().saveConfig(name, data);
+        return this.ipcRenderer().invoke('launcherSaveConfig', name, data);
     },
     preventExit(e) {
         e.returnValue = false;
@@ -216,13 +213,14 @@ const Launcher = {
         this.requestExit();
     },
     requestExit() {
-        const app = this.remoteApp();
-        app.setHookBeforeQuitEvent(false);
-        if (this.pendingUpdateFile) {
-            app.restartAndUpdate(this.pendingUpdateFile);
-        } else {
-            app.quit();
-        }
+        const ipcRenderer = this.ipcRenderer();
+        ipcRenderer.invoke('launcherSetHookBeforeQuitEvent', false).then(() => {
+            if (this.pendingUpdateFile) {
+                ipcRenderer.invoke('launcherRestartAndUpdate', this.pendingUpdateFile);
+            } else {
+                ipcRenderer.invoke('launcherQuit');
+            }
+        });
     },
     requestRestartAndUpdate(updateFilePath) {
         this.pendingUpdateFile = updateFilePath;
@@ -231,24 +229,18 @@ const Launcher = {
     cancelRestart() {
         this.pendingUpdateFile = undefined;
     },
-    setClipboardText(text) {
-        return this.electron().clipboard.writeText(text);
-    },
-    getClipboardText() {
-        return this.electron().clipboard.readText();
+    setClipboardText(text, clearAfterSeconds) {
+        this.ipcRenderer().invoke('launcherWriteClipboard', text, clearAfterSeconds);
     },
     clearClipboardText() {
-        const { clipboard } = this.electron();
-        clipboard.clear();
-        if (process.platform === 'linux') {
-            clipboard.clear('selection');
-        }
+        // clears only the text copied with setClipboardText, if it's still there
+        this.ipcRenderer().invoke('launcherClearClipboard');
     },
     quitOnRealQuitEventIfMinimizeOnQuitIsEnabled() {
         return !!this.pendingUpdateFile;
     },
     minimizeApp() {
-        this.remoteApp().minimizeApp({
+        this.ipcRenderer().invoke('launcherMinimizeApp', {
             restore: Locale.menuRestoreApp.replace('{}', 'KeeWeb'),
             quit: Locale.menuQuitApp.replace('{}', 'KeeWeb')
         });
@@ -259,31 +251,41 @@ const Launcher = {
     updaterEnabled() {
         return process.platform !== 'linux';
     },
-    getMainWindow() {
-        return this.remoteApp().getMainWindow();
-    },
     resolveProxy(url, callback) {
-        const window = this.getMainWindow();
-        const session = window.webContents.session;
-        session.resolveProxy(url).then((proxy) => {
-            const match = /^proxy\s+([\w\.]+):(\d+)+\s*/i.exec(proxy);
-            proxy = match && match[1] ? { host: match[1], port: +match[2] } : null;
-            callback(proxy);
-        });
+        this.ipcRenderer()
+            .invoke('launcherResolveProxy', url)
+            .then((proxy) => {
+                const match = /^proxy\s+([\w\.]+):(\d+)+\s*/i.exec(proxy);
+                proxy = match && match[1] ? { host: match[1], port: +match[2] } : null;
+                callback(proxy);
+            });
     },
     hideApp() {
-        const app = this.remoteApp();
         if (this.platform() === 'darwin') {
-            app.hide();
+            this.ipcRenderer().invoke('launcherHideApp');
         } else {
-            app.minimizeThenHideIfInTray();
+            this.ipcRenderer().invoke('launcherMinimizeThenHideIfInTray');
         }
     },
     isAppFocused() {
-        return !!this.electron().remote.BrowserWindow.getFocusedWindow();
+        return document.hasFocus();
     },
     showMainWindow() {
-        this.remoteApp().showAndFocusMainWindow();
+        this.ipcRenderer().invoke('launcherShowMainWindow');
+    },
+    async httpRequest(config) {
+        const { url, method, headers, data, dataIsMultipart } = config;
+        const res = await this.ipcRenderer().invoke('launcherHttpRequest', {
+            url,
+            method,
+            headers,
+            data,
+            dataIsMultipart
+        });
+        if (res.error) {
+            throw res.error;
+        }
+        return res;
     },
     spawn(config) {
         const ts = logger.ts();
@@ -329,19 +331,22 @@ const Launcher = {
         }
     },
     setGlobalShortcuts(appSettings) {
-        this.remoteApp().setGlobalShortcuts(appSettings);
+        const shortcuts = Object.fromEntries(
+            Object.entries(appSettings).filter(([key]) => key.startsWith('globalShortcut'))
+        );
+        this.ipcRenderer().invoke('launcherSetGlobalShortcuts', shortcuts);
     },
     minimizeMainWindow() {
-        this.getMainWindow().minimize();
+        this.ipcRenderer().invoke('launcherMinimizeMainWindow');
     },
     maximizeMainWindow() {
-        this.getMainWindow().maximize();
+        this.ipcRenderer().invoke('launcherMaximizeMainWindow');
     },
     restoreMainWindow() {
-        this.getMainWindow().restore();
+        this.ipcRenderer().invoke('launcherRestoreMainWindow');
     },
     mainWindowMaximized() {
-        return this.getMainWindow().isMaximized();
+        return this.ipcRenderer().sendSync('launcherIsMainWindowMaximized');
     }
 };
 
@@ -363,7 +368,7 @@ if (window.launcherOpenedFile) {
 Events.on('app-ready', () =>
     setTimeout(() => {
         Launcher.checkOpenFiles();
-        Launcher.remoteApp().setAboutPanelOptions({
+        Launcher.ipcRenderer().invoke('launcherSetAboutPanelOptions', {
             applicationVersion: RuntimeInfo.version,
             version: RuntimeInfo.commit
         });
@@ -371,10 +376,10 @@ Events.on('app-ready', () =>
 );
 
 if (process.platform === 'darwin') {
-    Launcher.remoteApp().setHookBeforeQuitEvent(true);
+    Launcher.ipcRenderer().invoke('launcherSetHookBeforeQuitEvent', true);
 }
 
-Launcher.remoteApp().on('remote-app-event', (e) => {
+Launcher.ipcRenderer().on('remote-app-event', (event, e) => {
     if (window.debugRemoteAppEvents) {
         logger.debug('remote-app-event', e.name);
     }

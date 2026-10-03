@@ -3,6 +3,7 @@ import { Events } from 'framework/events';
 import { Logger } from 'util/logger';
 import { Launcher } from 'comp/launcher';
 import { Timeouts } from 'const/timeouts';
+import { noop } from 'util/fn';
 
 let NativeModules;
 
@@ -72,7 +73,8 @@ if (Launcher) {
                 hostRunning = true;
 
                 if (this.usbListenerRunning) {
-                    return this.call('startUsbListener');
+                    // other modules work without the USB listener, its error is logged in result
+                    this.callNoWait('startUsbListener').catch(noop);
                 }
             });
 
@@ -155,8 +157,13 @@ if (Launcher) {
         },
 
         startUsbListener() {
-            this.call('startUsbListener');
             this.usbListenerRunning = true;
+            if (hostRunning) {
+                this.callNoWait('startUsbListener').catch(noop);
+            } else {
+                // the listener is started together with the host
+                this.startHost().catch((e) => logger.error('Error starting host', e));
+            }
         },
 
         stopUsbListener() {
