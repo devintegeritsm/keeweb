@@ -89,3 +89,10 @@ keys
 
 node_modules/
 
+
+# #
+#   Self-hosting build output
+# #
+
+dist-selfhost/
+dist-desktop/

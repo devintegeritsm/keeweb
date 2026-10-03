@@ -1,0 +1,20 @@
+{
+    "settings": {
+        "dropbox": false,
+        "gdrive": false,
+        "onedrive": false,
+        "msteams": false,
+        "webdav": true,
+        "webdavSaveMethod": "move",
+        "webdavStatReload": false,
+        "canOpenDemo": false,
+        "autoSave": true,
+        "autoSaveInterval": -1,
+        "clipboardSeconds": 15,
+        "idleMinutes": 5,
+        "rememberKeyFiles": "",
+        "checkPasswordsOnHIBP": false,
+        "skipHttpsWarning": false,
+        "allowIframes": false
+    }
+}

@@ -1,0 +1,85 @@
+# Example nginx config for self-hosted KeeWeb, replace the names and paths.
+# Check it with `nginx -t` before reloading nginx.
+#
+# KeeWeb gets its own origin (keeweb.example.com): don't serve anything else from it,
+# especially files other people can upload, because same-origin content can tamper with the app.
+
+server {
+    listen 80;
+    server_name keeweb.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on; # nginx 1.25.1+, for older versions use "listen 443 ssl http2;" instead
+    server_name keeweb.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/keeweb.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/keeweb.example.com/privkey.pem;
+
+    # contents of dist-selfhost/www
+    root /var/www/keeweb;
+    index index.html;
+
+    # index.html has its own CSP, these headers add what a meta tag can't do
+    add_header Content-Security-Policy "frame-ancestors 'none'" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), usb=()" always;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # always revalidate the app, its service worker and the config, so updates are picked up
+    location ~ ^/(index\.html|service-worker\.js|config\.json)?$ {
+        expires -1;
+        try_files $uri $uri/ =404;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
+
+# Optional: CORS for a WebDAV server on another origin (dav.example.com) behind nginx.
+# KeeWeb runs in the browser, so the WebDAV origin must allow requests from the KeeWeb origin.
+# Only preflight requests coming from KeeWeb are answered here, other OPTIONS requests
+# (e.g. from WebDAV sync clients) still go to the WebDAV server.
+
+map "$request_method:$http_origin" $keeweb_preflight {
+    "OPTIONS:https://keeweb.example.com" 1;
+    default 0;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name dav.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/dav.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dav.example.com/privkey.pem;
+
+    location / {
+        if ($keeweb_preflight) {
+            add_header Access-Control-Allow-Origin "https://keeweb.example.com" always;
+            add_header Access-Control-Allow-Methods "GET, HEAD, PUT, MOVE, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Authorization, Cache-Control, Content-Type, Destination, Overwrite" always;
+            add_header Access-Control-Max-Age 600 always;
+            add_header Vary "Origin" always;
+            return 204;
+        }
+        add_header Access-Control-Allow-Origin "https://keeweb.example.com" always;
+        add_header Vary "Origin" always;
+
+        # your WebDAV server, e.g. Nextcloud or Apache mod_dav
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 100m;
+    }
+}
