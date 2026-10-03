@@ -7,7 +7,6 @@ import { GroupsMenuModel } from 'models/menu/groups-menu-model';
 import { MenuSectionModel } from 'models/menu/menu-section-model';
 import { StringFormat } from 'util/formatting/string-format';
 import { Locale } from 'util/locale';
-import { Launcher } from 'comp/launcher';
 import { Features } from 'util/features';
 
 class MenuModel extends Model {
@@ -122,7 +121,7 @@ class MenuModel extends Model {
         this.pluginsSection = new MenuSectionModel([
             { locTitle: 'plugins', icon: 'puzzle-piece', page: 'plugins' }
         ]);
-        if (Launcher) {
+        if (Features.supportsYubiKey) {
             this.devicesSection = new MenuSectionModel([
                 { locTitle: 'menuSetDevices', icon: 'usb', page: 'devices' }
             ]);

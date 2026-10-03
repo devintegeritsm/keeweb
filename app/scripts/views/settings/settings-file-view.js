@@ -98,7 +98,9 @@ class SettingsFileView extends View {
             : '';
         const showYubiKeyBlock =
             !!this.model.chalResp ||
-            (Launcher && AppSettingsModel.enableUsb && AppSettingsModel.yubiKeyShowChalResp);
+            (Features.supportsYubiKey &&
+                AppSettingsModel.enableUsb &&
+                AppSettingsModel.yubiKeyShowChalResp);
         const yubiKeys = [];
         if (showYubiKeyBlock) {
             for (const yk of this.yubiKeys) {
@@ -722,7 +724,11 @@ class SettingsFileView extends View {
     }
 
     refreshYubiKeys(userInitiated) {
-        if (!Launcher || !AppSettingsModel.enableUsb || !AppSettingsModel.yubiKeyShowChalResp) {
+        if (
+            !Features.supportsYubiKey ||
+            !AppSettingsModel.enableUsb ||
+            !AppSettingsModel.yubiKeyShowChalResp
+        ) {
             return;
         }
         if (!UsbListener.attachedYubiKeys) {

@@ -1,5 +1,6 @@
 const { readXoredValue, makeXoredValue } = require('./scripts/util/byte-utils');
 const { reqNative } = require('./scripts/util/req-native');
+const { checkYubiKeySupported } = require('./scripts/const/yubikey');
 
 const YubiKeyVendorIds = [0x1050];
 const attachedYubiKeys = [];
@@ -12,6 +13,8 @@ const messageHandlers = {
     start() {},
 
     startUsbListener() {
+        // the USB listener only looks for YubiKeys
+        checkYubiKeySupported();
         if (usbListenerRunning) {
             return;
         }
@@ -42,6 +45,7 @@ const messageHandlers = {
     },
 
     getYubiKeys(config) {
+        checkYubiKeySupported();
         return new Promise((resolve, reject) => {
             const ykChapResp = reqNative('yubikey-chalresp');
             ykChapResp.getYubiKeys(config, (err, yubiKeys) => {
@@ -55,6 +59,7 @@ const messageHandlers = {
     },
 
     yubiKeyChallengeResponse(yubiKey, challenge, slot, callbackId) {
+        checkYubiKeySupported();
         const ykChalResp = reqNative('yubikey-chalresp');
         challenge = Buffer.from(challenge);
         ykChalResp.challengeResponse(yubiKey, challenge, slot, (error, result) => {
@@ -75,6 +80,7 @@ const messageHandlers = {
     },
 
     yubiKeyCancelChallengeResponse() {
+        checkYubiKeySupported();
         const ykChalResp = reqNative('yubikey-chalresp');
         ykChalResp.cancelChallengeResponse();
     },

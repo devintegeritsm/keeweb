@@ -7,7 +7,8 @@ import { Features } from 'util/features';
 const logger = new Logger('usb-listener');
 
 const UsbListener = {
-    supported: Features.isDesktop,
+    // USB devices are watched only to find YubiKeys
+    supported: Features.supportsYubiKey,
     attachedYubiKeys: 0,
 
     init() {

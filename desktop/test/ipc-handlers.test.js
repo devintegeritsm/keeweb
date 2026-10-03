@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { EventEmitter } = require('events');
 const { expect } = require('chai');
 const mock = require('./mock-electron');
 
@@ -39,6 +40,31 @@ describe('ykman commands', () => {
         expect(isAllowedYkmanCommand(['-d', '1', 'oath', 'accounts', 'code', '--single', '--help']))
             .to.be.false;
         expect(isAllowedYkmanCommand(['-d', 1, 'oath', 'accounts', 'code'])).to.be.false;
+    });
+});
+
+describe('YubiKey', () => {
+    it('does not run ykman while YubiKey support is switched off', () => {
+        expect(() => mock.handlers.ykmanRun(mock.trustedEvent(), ['list'])).to.throw(
+            'YubiKey support is switched off'
+        );
+    });
+
+    it('does not use YubiKeys in the native module host', async () => {
+        const channel = new EventEmitter();
+        require('../native-module-host').startInMain(channel);
+        const commands = [
+            'startUsbListener',
+            'getYubiKeys',
+            'yubiKeyChallengeResponse',
+            'yubiKeyCancelChallengeResponse'
+        ];
+        for (const cmd of commands) {
+            const message = new Promise((resolve) => channel.once('message', resolve));
+            channel.emit('send', { callId: 1, cmd, args: [] });
+            const { args } = await message;
+            expect(args[0].error?.message, cmd).to.eql('YubiKey support is switched off');
+        }
     });
 });
 

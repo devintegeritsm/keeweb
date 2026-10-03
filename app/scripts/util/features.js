@@ -16,6 +16,9 @@ const Features = {
         !isDesktop &&
         !/^http(s?):\/\/((localhost:8085)|((app|beta)\.keeweb\.info))/.test(location.href),
     isLocal: location.origin.indexOf('localhost') >= 0,
+    // YubiKey support is switched off, set this to isDesktop to bring it back,
+    // together with YubiKeySupported in desktop/scripts/const/yubikey.js
+    supportsYubiKey: false,
 
     get supportsTitleBarStyles() {
         return isDesktop && (this.isMac || this.isWindows);

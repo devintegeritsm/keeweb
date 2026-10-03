@@ -8,6 +8,7 @@ import { Locale } from 'util/locale';
 import { Timeouts } from 'const/timeouts';
 import { Launcher } from 'comp/launcher';
 import { AppSettingsModel } from 'models/app-settings-model';
+import { Features } from 'util/features';
 
 const logger = new Logger('chal-resp');
 
@@ -34,13 +35,24 @@ const ChalRespCalculator = {
                     return resolve(kdbxweb.ByteUtils.hexToBytes(respFromCache));
                 }
 
-                if (!AppSettingsModel.enableUsb) {
-                    logger.debug('USB is disabled');
-                    Alerts.error({
+                let error;
+                if (!Features.supportsYubiKey) {
+                    error = {
+                        header: Locale.yubiKeyNotSupportedErrorHeader,
+                        body: Locale.yubiKeyNotSupportedErrorBody
+                    };
+                } else if (!AppSettingsModel.enableUsb) {
+                    error = {
                         header: Locale.yubiKeyDisabledErrorHeader,
-                        body: Locale.yubiKeyDisabledErrorBody,
+                        body: Locale.yubiKeyDisabledErrorBody
+                    };
+                }
+                if (error) {
+                    logger.debug(error.header);
+                    Alerts.error({
+                        ...error,
                         complete() {
-                            const err = new Error(Locale.yubiKeyDisabledErrorHeader);
+                            const err = new Error(error.header);
                             err.userCanceled = true;
                             err.ykError = true;
 

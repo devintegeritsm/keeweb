@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { handle } = require('../ipc-validation');
+const { checkYubiKeySupported } = require('../const/yubikey');
 
 // The app UI can run only these programs with the arguments it needs
 
@@ -18,6 +19,7 @@ const MacAppPath = '/Applications/KeeWeb.app';
 const MacInstallerPath = `${MacAppPath}/Contents/Installer/KeeWeb Installer.app/Contents/MacOS/applet`;
 
 handle('ykmanRun', (e, args, { throwOnStdErr } = {}) => {
+    checkYubiKeySupported();
     if (!isAllowedYkmanCommand(args)) {
         throw new Error('Unsupported ykman command');
     }
