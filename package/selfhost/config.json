@@ -5,7 +5,7 @@
         "onedrive": false,
         "msteams": false,
         "webdav": true,
-        "webdavSaveMethod": "move",
+        "webdavSaveMethod": "put",
         "webdavStatReload": false,
         "canOpenDemo": false,
         "autoSave": true,

@@ -67,12 +67,14 @@ server {
         if ($keeweb_preflight) {
             add_header Access-Control-Allow-Origin "https://keeweb.example.com" always;
             add_header Access-Control-Allow-Methods "GET, HEAD, PUT, MOVE, DELETE, OPTIONS" always;
-            add_header Access-Control-Allow-Headers "Authorization, Cache-Control, Content-Type, Destination, Overwrite" always;
+            add_header Access-Control-Allow-Headers "Authorization, Cache-Control, Content-Type, Destination, Overwrite, If-Match" always;
             add_header Access-Control-Max-Age 600 always;
             add_header Vary "Origin" always;
             return 204;
         }
         add_header Access-Control-Allow-Origin "https://keeweb.example.com" always;
+        # KeeWeb sends the ETag back in If-Match, so that a save fails if the file was changed
+        add_header Access-Control-Expose-Headers "ETag" always;
         add_header Vary "Origin" always;
 
         # your WebDAV server, e.g. Nextcloud or Apache mod_dav

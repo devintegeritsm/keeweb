@@ -39,7 +39,7 @@ Settings in `config.json` are applied on every load, overriding changes made in 
 | Setting | Value | Why |
 |---|---|---|
 | `dropbox`, `gdrive`, `onedrive`, `msteams` | `false` | only WebDAV is offered |
-| `webdavSaveMethod` | `move` | upload to a temp file, then move it over the database |
+| `webdavSaveMethod` | `put` | upload with `If-Match`, so a save can't overwrite changes made on another device after KeeWeb checked the file; use `move` if your server writes uploads in place instead of to a temp file like Nextcloud and Apache mod_dav do |
 | `canOpenDemo` | `false` | no demo database |
 | `autoSaveInterval` | `-1` | save on every change, so other devices see it and nothing waits in the browser |
 | `clipboardSeconds` | `15` | clear copied passwords |
@@ -70,8 +70,11 @@ Other settings are listed in `app/scripts/const/default-app-settings.js`.
   obfuscated with a key stored inside the database.
 - If WebDAV is on another origin than KeeWeb, it must allow KeeWeb with CORS: methods
   `GET, HEAD, PUT, MOVE, DELETE, OPTIONS`, request headers
-  `Authorization, Cache-Control, Content-Type, Destination, Overwrite`, and preflight
-  `OPTIONS` requests answered without authentication. See the second part of `nginx.conf.example`.
+  `Authorization, Cache-Control, Content-Type, Destination, Overwrite, If-Match`, the `ETag`
+  response header exposed with `Access-Control-Expose-Headers`, and preflight `OPTIONS` requests
+  answered without authentication. See the second part of `nginx.conf.example`. Without the `ETag`
+  header KeeWeb can't make saves conditional and relies on `Last-Modified`, which has a resolution
+  of one second.
 - Enable versioning or snapshots on the server, KeeWeb doesn't keep backups of WebDAV files.
 
 ## Updating

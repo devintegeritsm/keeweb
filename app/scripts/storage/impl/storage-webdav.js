@@ -11,6 +11,9 @@ class StorageWebDav extends StorageBase {
     enabled = true;
     uipos = 10;
 
+    // origins of servers that rejected If-Match with their own current etag
+    _ifMatchUnsupported = new Set();
+
     needShowOpenConfig() {
         return true;
     }
@@ -151,6 +154,7 @@ class StorageWebDav extends StorageBase {
         };
         this._statRequest(path, opts, 'Save:stat', (err, xhr, stat) => {
             let useTmpPath = this.appSettings.webdavSaveMethod !== 'put';
+            let etag = null;
             if (err) {
                 if (!err.notFound) {
                     return cb(err);
@@ -161,6 +165,8 @@ class StorageWebDav extends StorageBase {
             } else if (stat.rev !== rev) {
                 this.logger.debug('Save error', path, 'rev conflict', stat.rev, rev);
                 return cb({ revConflict: true }, xhr, stat);
+            } else {
+                etag = stat.etag;
             }
             if (useTmpPath) {
                 this._request(
@@ -186,13 +192,18 @@ class StorageWebDav extends StorageBase {
                                 });
                                 return cb(err, xhr, stat);
                             }
-                            if (stat.rev !== rev) {
+                            // MOVE can't be made conditional on the destination etag portably,
+                            // so check again after the upload, the etag also catches changes
+                            // made within the same second, which Last-Modified can't show
+                            if (stat.rev !== rev || (etag && stat.etag && stat.etag !== etag)) {
                                 this.logger.debug(
                                     'Save error',
                                     path,
                                     'rev conflict',
                                     stat.rev,
-                                    rev
+                                    rev,
+                                    stat.etag,
+                                    etag
                                 );
                                 this._request({
                                     ...saveOpts,
@@ -242,25 +253,64 @@ class StorageWebDav extends StorageBase {
                     }
                 );
             } else {
-                this._request(
-                    {
-                        ...saveOpts,
-                        op: 'Save:put',
-                        method: 'PUT',
-                        data,
-                        nostat: true
-                    },
-                    (err) => {
-                        if (err) {
-                            return cb(err);
-                        }
-                        this._statRequest(path, opts, 'Save:stat', (err, xhr, stat) => {
-                            cb(err, xhr, stat);
-                        });
+                this._putIfMatch(saveOpts, opts, data, rev, etag, (err) => {
+                    if (err) {
+                        return cb(err);
                     }
-                );
+                    this._statRequest(path, opts, 'Save:stat', (err, xhr, stat) => {
+                        cb(err, xhr, stat);
+                    });
+                });
             }
         });
+    }
+
+    _putIfMatch(saveOpts, opts, data, rev, etag, callback) {
+        // If-Match makes the server reject the upload if the file was changed after the stat,
+        // weak etags never pass it
+        let origin;
+        try {
+            origin = new URL(saveOpts.path, location.href).origin;
+        } catch {
+            origin = saveOpts.path;
+        }
+        const conditional =
+            !!etag && !etag.startsWith('W/') && !this._ifMatchUnsupported.has(origin);
+        this._request(
+            {
+                ...saveOpts,
+                op: 'Save:put',
+                method: 'PUT',
+                data,
+                nostat: true,
+                headers: conditional ? { 'If-Match': etag } : undefined
+            },
+            (err, xhr) => {
+                if (!err || !conditional) {
+                    return callback(err);
+                }
+                if (err.revConflict) {
+                    // some servers can't match their own etags, e.g. Apache with mod_deflate,
+                    // so make sure the file was really changed
+                    this._statRequest(saveOpts.path, opts, 'Save:stat', (statErr, xhr, stat) => {
+                        if (statErr || stat.rev !== rev || stat.etag !== etag) {
+                            return callback(err);
+                        }
+                        this.logger.info('If-Match failed for the current etag, ignoring it');
+                        this._ifMatchUnsupported.add(origin);
+                        this._putIfMatch(saveOpts, opts, data, rev, null, callback);
+                    });
+                    return;
+                }
+                if (xhr.status === 0 && err === 'network error') {
+                    // the CORS config of a server on another origin may not allow If-Match,
+                    // the browser checks it before sending the data, so a retry costs little
+                    this.logger.info('PUT with If-Match failed, retrying without it');
+                    return this._putIfMatch(saveOpts, opts, data, rev, null, callback);
+                }
+                callback(err);
+            }
+        );
     }
 
     fileOptsToStoreOpts(opts, file) {
@@ -366,7 +416,7 @@ class StorageWebDav extends StorageBase {
                 config.op + (config.op.charAt(config.op.length - 1) === 'e' ? 'd' : 'ed');
             this.logger.debug(completedOpName, config.path, rev, this.logger.ts(ts));
             if (callback) {
-                callback(null, xhr, rev ? { rev } : null);
+                callback(null, xhr, rev ? this._statWithEtag({ rev }, xhr) : null);
                 callback = null;
             }
         });
@@ -426,8 +476,17 @@ class StorageWebDav extends StorageBase {
         return kdbxweb.CryptoEngine.sha256(xhr.response).then((hash) => {
             const rev = kdbxweb.ByteUtils.bytesToHex(hash).substr(0, 10);
             this.logger.debug('Calculated rev by content', `${xhr.response.byteLength} bytes`, rev);
-            return { rev };
+            return this._statWithEtag({ rev }, xhr);
         });
+    }
+
+    _statWithEtag(stat, xhr) {
+        // getResponseHeader logs an error for headers a server on another origin doesn't expose
+        const match = /^etag:[ \t]*(.*?)[ \t]*$/im.exec(xhr.getAllResponseHeaders());
+        if (match && match[1]) {
+            stat.etag = match[1];
+        }
+        return stat;
     }
 }
 
