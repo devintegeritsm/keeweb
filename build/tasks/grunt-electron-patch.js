@@ -19,6 +19,9 @@ module.exports = function (grunt) {
                         [FuseV1Options.RunAsNode]: false,
                         [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
                         [FuseV1Options.EnableNodeCliInspectArguments]: false,
+                        // stays on: WebDAV requests from the page work without CORS only on file://,
+                        // local files can't be read because main.js serves file:// only from the app
+                        [FuseV1Options.GrantFileProtocolExtraPrivileges]: true,
                         [FuseV1Options.OnlyLoadAppFromAsar]: true
                     });
                 }

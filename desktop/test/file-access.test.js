@@ -86,7 +86,75 @@ describe('file-access', () => {
 
         await flush();
         const saved = JSON.parse(mock.configs['file-access']);
-        expect(saved.files).to.eql([allowed]);
+        expect(saved.files).to.eql([]);
+        expect(saved.readOnlyFiles).to.eql([allowed]);
+    });
+
+    it('allows only reading files allowed in a prompt', async () => {
+        const file = path.join(dir, 'prompted.kdbx');
+        mock.electron.dialog.promptResponse = 0;
+        await fileAccess.ensureFileAccess(file);
+        expect(mock.prompts[0].message).to.eql('Allow KeeWeb to read this file?');
+        expect(fileAccess.canAccessFile(file)).to.be.true;
+        expect(fileAccess.canAccessFile(file, { write: true })).to.be.false;
+
+        let error;
+        await fileAccess.ensureFileAccess(file, { write: true }).catch((e) => (error = e));
+        expect(error.code).to.eql('EACCES');
+        expect(mock.prompts.length).to.eql(1);
+
+        fileAccess.grantFile(file);
+        await fileAccess.ensureFileAccess(file, { write: true });
+    });
+
+    it("doesn't ask about writing files", async () => {
+        mock.electron.dialog.promptResponse = 0;
+        let error;
+        await fileAccess
+            .ensureFileAccess(path.join(mock.tempDir, 'LaunchAgents', 'x.plist'), { write: true })
+            .catch((e) => (error = e));
+        expect(error.code).to.eql('EACCES');
+        expect(mock.prompts.length).to.eql(0);
+    });
+
+    it('allows writing to granted files and database files in granted folders', async () => {
+        await fileAccess.load();
+        fileAccess.grantFile(path.join(dir, 'db.kdbx'));
+        fileAccess.grantFolder(path.join(dir, 'Backups'));
+        await fileAccess.ensureFileAccess(path.join(dir, 'db.kdbx'), { write: true });
+        await fileAccess.ensureFileAccess(path.join(dir, 'Backups', 'db.bak'), { write: true });
+        await fileAccess.ensureFileAccess(path.join(mock.userData, 'OfflineFiles', 'id'), {
+            write: true
+        });
+        expect(mock.prompts.length).to.eql(0);
+    });
+
+    it("uses fixed prompt texts that the page can't change", async () => {
+        require('../scripts/locale').setLocale({
+            sysFileAccessAllow: 'Deny',
+            sysFileAccessDeny: 'Allow',
+            sysFileAccessFile: 'Deny this?'
+        });
+        await fileAccess.ensureFileAccess(path.join(dir, 'db.kdbx')).catch(() => {});
+        await fileAccess.ensureFolderAccess(path.join(dir, 'Backups')).catch(() => {});
+        expect(mock.prompts.map((p) => [p.buttons, p.defaultId, p.cancelId])).to.eql([
+            [['Allow', 'Deny'], 1, 1],
+            [['Allow', 'Deny'], 1, 1]
+        ]);
+        expect(mock.prompts[0].message).to.eql('Allow KeeWeb to read this file?');
+        expect(mock.prompts[1].message).to.eql('Allow KeeWeb to save backups in this folder?');
+    });
+
+    it('loads files allowed in a prompt as read-only', async () => {
+        mock.configs['file-access'] = JSON.stringify({
+            files: [path.join(dir, 'full.kdbx')],
+            readOnlyFiles: [path.join(dir, 'read.kdbx')],
+            folders: []
+        });
+        await fileAccess.load();
+        expect(fileAccess.canAccessFile(path.join(dir, 'full.kdbx'), { write: true })).to.be.true;
+        expect(fileAccess.canAccessFile(path.join(dir, 'read.kdbx'))).to.be.true;
+        expect(fileAccess.canAccessFile(path.join(dir, 'read.kdbx'), { write: true })).to.be.false;
     });
 
     it('asks once when the same file is requested twice at the same time', async () => {
@@ -122,6 +190,7 @@ describe('file-access', () => {
         expect(fileAccess.canAccessFolder(path.join(dir, 'Backups'))).to.be.true;
         expect(JSON.parse(mock.configs['file-access'])).to.eql({
             files: [path.join(dir, 'local.kdbx'), path.join(dir, 'key.keyx')],
+            readOnlyFiles: [],
             folders: [path.join(dir, 'Backups')]
         });
     });

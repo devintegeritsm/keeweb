@@ -20,7 +20,8 @@ handleFs('fsReadFile', async (filePath) => {
     return new Uint8Array(await fs.promises.readFile(filePath));
 });
 handleFs('fsWriteFile', async (filePath, data) => {
-    await ensureFileAccess(filePath);
+    // never asks: writing is allowed only to files chosen by the user
+    await ensureFileAccess(filePath, { write: true });
     await writeFileReplacing(filePath, Buffer.from(data));
 });
 handleFs('fsStat', async (filePath) => {

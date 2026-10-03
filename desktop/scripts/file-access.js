@@ -1,10 +1,11 @@
 const path = require('path');
 const { app, dialog } = require('electron');
-const { locale } = require('./locale');
 
 // The app UI can access only files the user chose: in open and save dialogs, with drag and drop,
 // by opening a file with the app, or by allowing it in a prompt; and the app's own folders.
 // This way a compromised page can't read or overwrite other files.
+// Files allowed in a prompt can only be read: the page asks for them, so it mustn't be able
+// to make the user allow writing to e.g. a launch agent. Writing needs a choice made in a dialog.
 
 const ConfigName = 'file-access';
 const OwnFolderNames = ['OfflineFiles', 'PluginFiles', 'FilesCache'];
@@ -15,6 +16,7 @@ const caseInsensitive = process.platform === 'win32' || process.platform === 'da
 const MaxDeniedPrompts = 3;
 
 const files = new Map();
+const readOnlyFiles = new Map();
 const folders = new Map();
 const deniedInSession = new Set();
 const pendingPrompts = new Map();
@@ -56,8 +58,11 @@ function isOwnPath(filePath) {
     return getOwnFolders().some((folder) => isSameOrInFolder(filePath, folder));
 }
 
-function canAccessFile(filePath) {
+function canAccessFile(filePath, { write = false } = {}) {
     if (files.has(pathKey(filePath)) || isOwnPath(filePath)) {
+        return true;
+    }
+    if (!write && readOnlyFiles.has(pathKey(filePath))) {
         return true;
     }
     const ext = path.extname(filePath).toLowerCase();
@@ -78,6 +83,14 @@ function grantFile(filePath) {
     filePath = normalizePath(filePath);
     if (!files.has(pathKey(filePath))) {
         files.set(pathKey(filePath), filePath);
+        save();
+    }
+}
+
+function grantReadOnlyFile(filePath) {
+    filePath = normalizePath(filePath);
+    if (!files.has(pathKey(filePath)) && !readOnlyFiles.has(pathKey(filePath))) {
+        readOnlyFiles.set(pathKey(filePath), filePath);
         save();
     }
 }
@@ -105,7 +118,7 @@ async function requestAccess(filePath, kind) {
                     if (kind === 'folder') {
                         grantFolder(filePath);
                     } else {
-                        grantFile(filePath);
+                        grantReadOnlyFile(filePath);
                     }
                 } else {
                     deniedPrompts++;
@@ -122,21 +135,24 @@ async function requestAccess(filePath, kind) {
 
 async function showPrompt(filePath, kind) {
     const mainWindow = app.getMainWindow();
+    // the texts are fixed here: if the page could set them, it could swap Allow and Deny
     const options = {
         type: 'question',
-        buttons: [locale.sysFileAccessAllow || 'Allow', locale.sysFileAccessDeny || 'Deny'],
+        buttons: ['Allow', 'Deny'],
         defaultId: 1,
         cancelId: 1,
         noLink: true,
         message:
             kind === 'folder'
-                ? locale.sysFileAccessFolder || 'Allow KeeWeb to save files in this folder?'
-                : locale.sysFileAccessFile || 'Allow KeeWeb to open this file?',
+                ? 'Allow KeeWeb to save backups in this folder?'
+                : 'Allow KeeWeb to read this file?',
         detail:
             filePath +
             '\n\n' +
-            (locale.sysFileAccessDetail ||
-                "KeeWeb can open only files you selected. Deny if you didn't ask KeeWeb to open or save it.")
+            (kind === 'folder'
+                ? 'KeeWeb will be able to create and replace .kdbx and .bak files in this folder. ' +
+                  "Deny if you didn't just choose it as the backup folder."
+                : "KeeWeb will be able to read this file, but not change it. Deny if you didn't just ask KeeWeb to open it.")
     };
     const { response } = mainWindow
         ? await dialog.showMessageBox(mainWindow, options)
@@ -150,12 +166,12 @@ function accessDenied(filePath) {
     return err;
 }
 
-async function ensureFileAccess(filePath, { prompt = true } = {}) {
+async function ensureFileAccess(filePath, { prompt = true, write = false } = {}) {
     await load();
-    if (canAccessFile(filePath)) {
+    if (canAccessFile(filePath, { write })) {
         return;
     }
-    if (prompt && (await requestAccess(filePath, 'file'))) {
+    if (prompt && !write && (await requestAccess(filePath, 'file'))) {
         return;
     }
     throw accessDenied(filePath);
@@ -198,8 +214,7 @@ async function loadConfig() {
         // the first start with access checks; the page can write file-info,
         // so this runs only once and before the app window is created
         await migrateFromFileInfo();
-        const config = { files: [...files.values()], folders: [...folders.values()] };
-        await app.saveConfig(ConfigName, JSON.stringify(config)).catch(() => {});
+        await app.saveConfig(ConfigName, JSON.stringify(getConfig())).catch(() => {});
         return;
     }
     let config;
@@ -209,9 +224,20 @@ async function loadConfig() {
     for (const filePath of config?.files || []) {
         files.set(pathKey(filePath), filePath);
     }
+    for (const filePath of config?.readOnlyFiles || []) {
+        readOnlyFiles.set(pathKey(filePath), filePath);
+    }
     for (const folderPath of config?.folders || []) {
         folders.set(pathKey(folderPath), folderPath);
     }
+}
+
+function getConfig() {
+    return {
+        files: [...files.values()],
+        readOnlyFiles: [...readOnlyFiles.values()],
+        folders: [...folders.values()]
+    };
 }
 
 async function migrateFromFileInfo() {
@@ -248,10 +274,7 @@ async function migrateFromFileInfo() {
 function save() {
     // grants made while loading are merged with the loaded ones
     load()
-        .then(() => {
-            const config = { files: [...files.values()], folders: [...folders.values()] };
-            return app.saveConfig(ConfigName, JSON.stringify(config));
-        })
+        .then(() => app.saveConfig(ConfigName, JSON.stringify(getConfig())))
         .catch(() => {});
 }
 

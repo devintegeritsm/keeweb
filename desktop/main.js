@@ -135,6 +135,11 @@ main.on('ready', () => {
         })
         .then(() => {
             logProgress('loading file access');
+            require('./scripts/permissions').setPermissionHandlers(electron.session.defaultSession);
+            require('./scripts/file-protocol').handleFileProtocol(
+                electron.protocol,
+                main.getAppPath()
+            );
             createMainWindow();
             setupIpcHandlers();
             setGlobalShortcuts(appSettings);
