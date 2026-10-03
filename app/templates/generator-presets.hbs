@@ -28,6 +28,11 @@
                 <input type="text" class="input-base" id="gen-ps__field-length" value="{{selected.length}}"
                        size="50" maxlength="3" required pattern="\d+" {{#if selected.builtIn}}readonly{{/if}} />
             </div>
+            <div class="gen-ps__field">
+                <input type="checkbox" class="input-base" id="gen-ps__check-pronounceable"
+                    {{#if selected.pronounceable}}checked{{/if}} {{#if selected.builtIn}}disabled{{/if}} />
+                <label for="gen-ps__check-pronounceable">{{res 'genPsPronounceable'}}</label>
+            </div>
             {{#each ranges as |range|}}
             <div class="gen-ps__field">
                 <input type="checkbox" class="input-base gen-ps__check-range" id="gen-ps__check-{{range.name}}"
@@ -37,10 +42,21 @@
             </div>
             {{/each}}
             <div class="gen-ps__field">
+                <label for="gen-ps__field-digits-count">{{res 'genPsDigitsCount'}}:</label>
+                <input type="text" class="input-base" id="gen-ps__field-digits-count" value="{{selected.digitsCount}}"
+                       maxlength="3" pattern="\d*" placeholder="{{res 'genPsCountAny'}}" {{#if selected.builtIn}}readonly{{/if}} />
+            </div>
+            <div class="gen-ps__field">
                 <label for="gen-ps__field-include">{{res 'genPsInclude'}}:</label>
                 <input type="text" class="input-base" id="gen-ps__field-include" value="{{selected.include}}"
                        {{#if selected.builtIn}}readonly{{/if}} />
             </div>
+            <div class="gen-ps__field">
+                <label for="gen-ps__field-include-count">{{res 'genPsIncludeCount'}}:</label>
+                <input type="text" class="input-base" id="gen-ps__field-include-count" value="{{selected.includeCount}}"
+                       maxlength="3" pattern="\d*" placeholder="{{res 'genPsCountAny'}}" {{#if selected.builtIn}}readonly{{/if}} />
+            </div>
+            {{#unless selected.pronounceable}}
             <div class="gen-ps__field">
                 <label for="gen-ps__field-pattern">{{res 'genPsPattern'}}: <i class="fa fa-info-circle info-btn info-btn--pattern"></i></label>
                 <div class="gen-ps__pattern-help hide">
@@ -60,6 +76,7 @@
                 <input type="text" class="input-base" id="gen-ps__field-pattern" value="{{selected.pattern}}"
                        {{#if selected.builtIn}}readonly{{/if}} />
             </div>
+            {{/unless}}
             <div class="gen-ps__field">
                 <label>{{res 'genPsExample'}}:</label>
                 <div class="gen-ps__example"></div>

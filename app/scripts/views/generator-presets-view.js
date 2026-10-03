@@ -21,8 +21,11 @@ class GeneratorPresetsView extends View {
         'change #gen-ps__check-enabled': 'changeEnabled',
         'change #gen-ps__check-default': 'changeDefault',
         'input #gen-ps__field-length': 'changeLength',
+        'change #gen-ps__check-pronounceable': 'changePronounceable',
         'change .gen-ps__check-range': 'changeRange',
+        'input #gen-ps__field-digits-count': 'changeDigitsCount',
         'input #gen-ps__field-include': 'changeInclude',
+        'input #gen-ps__field-include-count': 'changeIncludeCount',
         'input #gen-ps__field-pattern': 'changePattern'
     };
 
@@ -60,17 +63,19 @@ class GeneratorPresetsView extends View {
         const rangeOverride = {
             high: '¡¢£¤¥¦§©ª«¬®¯°±¹²´µ¶»¼÷¿ÀÖîü...'
         };
-        return ['Upper', 'Lower', 'Digits', 'Special', 'Brackets', 'High', 'Ambiguous'].map(
-            (name) => {
-                const nameLower = name.toLowerCase();
-                return {
-                    name: nameLower,
-                    title: Locale['genPs' + name],
-                    enabled: sel[nameLower],
-                    sample: rangeOverride[nameLower] || CharRanges[nameLower]
-                };
-            }
-        );
+        // pronounceable passwords have only letters, digits, and additional symbols
+        const names = sel.pronounceable
+            ? ['Upper', 'Lower', 'Digits', 'Ambiguous']
+            : ['Upper', 'Lower', 'Digits', 'Special', 'Brackets', 'High', 'Ambiguous'];
+        return names.map((name) => {
+            const nameLower = name.toLowerCase();
+            return {
+                name: nameLower,
+                title: Locale['genPs' + name],
+                enabled: sel[nameLower],
+                sample: rangeOverride[nameLower] || CharRanges[nameLower]
+            };
+        });
     }
 
     getPreset(name) {
@@ -103,13 +108,16 @@ class GeneratorPresetsView extends View {
             name,
             title,
             length: selected.length,
+            pronounceable: selected.pronounceable,
             upper: selected.upper,
             lower: selected.lower,
             digits: selected.digits,
             special: selected.special,
             brackets: selected.brackets,
             ambiguous: selected.ambiguous,
-            include: selected.include
+            include: selected.include,
+            digitsCount: selected.digitsCount,
+            includeCount: selected.includeCount
         };
         GeneratorPresets.add(preset);
         this.selected = name;
@@ -167,6 +175,11 @@ class GeneratorPresetsView extends View {
         this.renderExample();
     }
 
+    changePronounceable(e) {
+        GeneratorPresets.setPreset(this.selected, { pronounceable: e.target.checked });
+        this.render();
+    }
+
     changeRange(e) {
         const enabled = e.target.checked;
         const range = e.target.dataset.range;
@@ -180,6 +193,27 @@ class GeneratorPresetsView extends View {
         if (include !== this.getPreset(this.selected).include) {
             GeneratorPresets.setPreset(this.selected, { include });
         }
+        this.presets = GeneratorPresets.all;
+        this.renderExample();
+    }
+
+    changeDigitsCount(e) {
+        this.changeCount(e, 'digitsCount');
+    }
+
+    changeIncludeCount(e) {
+        this.changeCount(e, 'includeCount');
+    }
+
+    changeCount(e, prop) {
+        // an empty count means any number of characters
+        const value = e.target.value.trim();
+        if (value && !/^\d+$/.test(value)) {
+            $(e.target).addClass('input--error');
+            return;
+        }
+        $(e.target).removeClass('input--error');
+        GeneratorPresets.setPreset(this.selected, { [prop]: value ? +value : undefined });
         this.presets = GeneratorPresets.all;
         this.renderExample();
     }

@@ -151,7 +151,8 @@ class GeneratorView extends View {
     optionChanged(option) {
         if (
             this.preset === 'Custom' ||
-            (this.preset === 'Pronounceable' && ['length', 'lower', 'upper'].indexOf(option) >= 0)
+            (this.gen.pronounceable &&
+                ['length', 'lower', 'upper', 'digits', 'ambiguous'].includes(option))
         ) {
             return;
         }
